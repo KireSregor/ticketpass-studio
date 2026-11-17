@@ -15,7 +15,8 @@ Requisitos: Node.js 20+, Python 3.12+ y AWS CLI con el perfil del laboratorio co
 ```powershell
 npm ci
 python scripts/package_backend.py
-npx serverless package --stage dev --region us-east-1
+python scripts/prepare_deployment_bucket.py --region us-east-1
+npx serverless package --stage dev --region us-east-1 --param="deploymentBucket=NOMBRE_BUCKET"
 ```
 
 El script descarga únicamente wheels para Python 3.11 / Linux x86_64 y crea `.build/backend.zip`. No copia entornos Windows, tests, archivos .env ni datos de organizadores. Si Python no está en PATH, usa la ruta absoluta del intérprete instalado. `.build/`, `.serverless/` y `node_modules/` están excluidos de Git.
@@ -29,7 +30,7 @@ La clave se entrega mediante la variable de entorno GROQ_API_KEY del proceso de 
 ```powershell
 $groqSecure = Read-Host 'Clave Groq' -AsSecureString
 $env:GROQ_API_KEY = [System.Net.NetworkCredential]::new('', $groqSecure).Password
-npx serverless deploy --stage dev --region us-east-1
+npx serverless deploy --stage dev --region us-east-1 --param="deploymentBucket=NOMBRE_BUCKET"
 Remove-Item Env:GROQ_API_KEY
 ```
 
@@ -38,7 +39,7 @@ Serverless pasa el valor al parámetro CloudFormation GroqApiKey, marcado NoEcho
 ## Despliegue
 
 ```powershell
-npx serverless deploy --stage dev --region us-east-1
+npx serverless deploy --stage dev --region us-east-1 --param="deploymentBucket=NOMBRE_BUCKET"
 npx serverless info --stage dev --region us-east-1
 ```
 
@@ -57,3 +58,14 @@ El chat mantiene el límite de 10 consultas por minuto por organizador. El API G
 Fuentes: [recursos de Serverless](https://www.serverless.com/framework/docs/providers/aws/guide/resources), [empaquetado](https://www.serverless.com/framework/docs/providers/aws/guide/packaging).
 
 Lambda utiliza Python 3.11, compatible con la versión fijada de Serverless Framework. El script puede ejecutarse con un Python local 3.12 o superior porque descarga los wheels de destino explícitamente.
+
+
+## Primer despliegue y bucket de artefactos
+
+`prepare_deployment_bucket.py` utiliza las credenciales est?ndar de boto3/AWS CLI y devuelve el nombre del bucket. Reemplaza NOMBRE_BUCKET por ese resultado. El bucket queda privado y cifrado. Es externo al stack, se reutiliza entre despliegues y no debe eliminarse mientras el stack lo utilice. Evita el fallo inicial de Serverless 3 al pasar stackParameters a su plantilla provisional de bootstrap.
+
+## Hosting de la web cuando Academy no permite CloudFront
+
+Si el rol no permite CloudFront, puede habilitarse exclusivamente el sitio est?tico p?blico de S3 con `--param="publicWebsite=true"`. Esto publica solo el bucket FrontendBucket mediante GET; FilesBucket, documentos y reportes permanecen privados. El sitio S3 es HTTP, no HTTPS; no es una soluci?n para producci?n con datos reales. CloudFront se mantiene como opci?n HTTPS cuando la cuenta tenga permisos.
+
+Despu?s del primer despliegue, consulta FrontendBucketName y configura frontendOrigin al origen HTTP exacto del sitio. Vuelve a desplegar usando los mismos par?metros, deploymentBucket y clave Groq. Compila frontend con VITE_API_BASE=ApiUrl y sube solo frontend/dist a FrontendBucket. No subas .env ni archivos locales de usuarios. Revisar tanto CORS de API como CORS de S3.

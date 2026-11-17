@@ -14,6 +14,8 @@ provider:
   iam:
     role:
       Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+  deploymentBucket:
+    name: ${param:deploymentBucket}
   apiGateway:
     binaryMediaTypes:
     - application/pdf
@@ -40,6 +42,8 @@ provider:
     ParameterValue: ${param:cloudFront, 'false'}
   - ParameterKey: GroqApiKey
     ParameterValue: ${env:GROQ_API_KEY, ''}
+  - ParameterKey: EnablePublicWebsite
+    ParameterValue: ${param:publicWebsite, 'false'}
 package:
   artifact: .build/backend.zip
 functions:
@@ -57,6 +61,7 @@ functions:
           - Authorization
           - Content-Type
           - Idempotency-Key
+    timeout: 28
   eventsApi:
     handler: api.handler
     environment:
@@ -98,6 +103,7 @@ functions:
           - Authorization
           - Content-Type
           - Idempotency-Key
+    timeout: 28
   chatApi:
     handler: api.handler
     environment:
@@ -115,6 +121,7 @@ functions:
           - Authorization
           - Content-Type
           - Idempotency-Key
+    timeout: 28
   importsApi:
     handler: api.handler
     environment:
@@ -172,6 +179,7 @@ functions:
           - Authorization
           - Content-Type
           - Idempotency-Key
+    timeout: 28
   extractPdf:
     handler: workflow.extract_task
   evaluateDocument:
@@ -195,7 +203,7 @@ resources:
       Type: String
       NoEcho: true
       Default: ''
-      Description: Clave Groq. Vacía permite desplegar APIs pero las revisiones IA fallarán explícitamente.
+      Description: Clave Groq. VacÃ­a permite desplegar APIs pero las revisiones IA fallarÃ¡n explÃ­citamente.
     FrontendOrigin:
       Type: String
       Default: http://127.0.0.1:5173
@@ -207,6 +215,13 @@ resources:
       - 'false'
       Default: 'false'
       Description: Crear hosting HTTPS para el frontend solo si el laboratorio permite CloudFront.
+    EnablePublicWebsite:
+      Type: String
+      AllowedValues:
+      - 'true'
+      - 'false'
+      Default: 'false'
+      Description: Public static frontend only; documents and reports remain private.
   Conditions:
     WithCloudFront:
       Fn::Equals:
@@ -217,6 +232,23 @@ resources:
       - Fn::Equals:
         - Ref: GroqApiKey
         - ''
+    WithPublicWebsite:
+      Fn::And:
+      - Fn::Equals:
+        - Ref: EnablePublicWebsite
+        - 'true'
+      - Fn::Not:
+        - Fn::Equals:
+          - Ref: EnableCloudFront
+          - 'true'
+    WithFrontendHosting:
+      Fn::Or:
+      - Fn::Equals:
+        - Ref: EnableCloudFront
+        - 'true'
+      - Fn::Equals:
+        - Ref: EnablePublicWebsite
+        - 'true'
   Resources:
     ImportWorkflow:
       Type: AWS::StepFunctions::StateMachine
@@ -389,10 +421,32 @@ resources:
       Type: AWS::S3::Bucket
       Properties:
         PublicAccessBlockConfiguration:
-          BlockPublicAcls: true
-          BlockPublicPolicy: true
-          IgnorePublicAcls: true
-          RestrictPublicBuckets: true
+          BlockPublicAcls:
+            Fn::If:
+            - WithPublicWebsite
+            - false
+            - true
+          BlockPublicPolicy:
+            Fn::If:
+            - WithPublicWebsite
+            - false
+            - true
+          IgnorePublicAcls:
+            Fn::If:
+            - WithPublicWebsite
+            - false
+            - true
+          RestrictPublicBuckets:
+            Fn::If:
+            - WithPublicWebsite
+            - false
+            - true
+        WebsiteConfiguration:
+          Fn::If:
+          - WithPublicWebsite
+          - IndexDocument: index.html
+            ErrorDocument: index.html
+          - Ref: AWS::NoValue
     FrontendOriginAccess:
       Type: AWS::CloudFront::OriginAccessControl
       Condition: WithCloudFront
@@ -451,6 +505,20 @@ resources:
               StringEquals:
                 AWS:SourceArn:
                   Fn::Sub: arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+    FrontendWebsitePolicy:
+      Type: AWS::S3::BucketPolicy
+      Condition: WithPublicWebsite
+      Properties:
+        Bucket:
+          Ref: FrontendBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource:
+              Fn::Sub: ${FrontendBucket.Arn}/*
   Outputs:
     ApiUrl:
       Value:
@@ -459,9 +527,14 @@ resources:
       Value:
         Ref: FrontendBucket
     FrontendUrl:
-      Condition: WithCloudFront
+      Condition: WithFrontendHosting
       Value:
-        Fn::Sub: https://${FrontendDistribution.DomainName}
+        Fn::If:
+        - WithCloudFront
+        - Fn::Sub: https://${FrontendDistribution.DomainName}
+        - Fn::GetAtt:
+          - FrontendBucket
+          - WebsiteURL
     WorkflowArn:
       Value:
         Ref: ImportWorkflow

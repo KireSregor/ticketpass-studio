@@ -13,7 +13,7 @@ Fecha: 17 de noviembre de 2026. Entorno: Windows, ejecución local con SQLite y 
 
 ## Alcance y pendientes
 
-La ejecución local usa tareas en segundo plano y SQLite. La infraestructura Serverless usa Step Functions, Lambda, API Gateway, DynamoDB y S3. No se ha desplegado en AWS Academy: faltan credenciales temporales y comprobar permisos del rol. La validación estática no verifica esos permisos, conectividad o cuotas.
+La ejecución local usa tareas en segundo plano y SQLite. La infraestructura Serverless usa Step Functions, Lambda, API Gateway, DynamoDB y S3. Ya se despleg? en AWS Academy; consultar DESPLIEGUE.md para la evidencia real y las restricciones. La validación estática no verifica esos permisos, conectividad o cuotas.
 
 La colección Postman está preparada, pero no se ha ejecutado dentro de la aplicación Postman. Las pruebas automatizadas equivalentes y el recorrido de navegador no sustituyen las capturas Postman que pide el docente.
 
@@ -38,3 +38,7 @@ Acceso desde Backstage añadido: menú Asistente IA y enlace en el banner de Mis
 ## Migración de la herramienta de despliegue
 
 Se eliminó template.yaml y se adoptó serverless.yml con Serverless Framework 3.40.0, Python 3.11 en Lambda y empaquetado de wheels Linux sin Docker. La caché global de Serverless no fue escribible en este entorno incluso tras autorizarla; para la validación se aisló la caché en work mediante un adaptador de prueba, sin modificar el framework ni el código publicado. `serverless package` y cfn-lint pasaron sin credenciales reales y sin crear recursos AWS.
+
+## Verificaci?n posterior al despliegue
+
+Las pruebas reales del 17/11/2026, incluida una ejecuci?n SUCCEEDED de Step Functions y el chat con Groq, est?n en DESPLIEGUE.md. Se corrigi? el bootstrap de Serverless usando un bucket privado externo de artefactos; las funciones de API tienen timeout de 28 segundos y las tareas del workflow conservan 45 segundos. La opci?n publicWebsite solo afecta al frontend est?tico.
