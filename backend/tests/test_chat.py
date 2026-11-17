@@ -79,3 +79,31 @@ def test_empty_overview_does_not_repeat_missing_fields(monkeypatch):
     result = chat.answer_event('¿Qué evento tenemos?', {'title': '', 'status': 'BORRADOR'}, [], ['Completa el nombre.'])
     assert 'Sin completar' not in result['answer']
     assert 'adjuntando un PDF' in result['answer']
+
+
+@pytest.mark.parametrize('message', ['hols', 'no te entiendo xd', 'como subo el pdf', 'asdf'])
+def test_model_can_clarify_informal_messages(message, monkeypatch):
+    monkeypatch.setattr(chat, 'select_evidence', lambda *args: {'in_scope': True, 'mode': 'conversation', 'reply': '¡Hola! ¿En qué te ayudo con tu evento?', 'fields': [], 'sources': []})
+    result = chat.answer_event(message, {}, [], [])
+    assert result['scope'] == 'EVENT'
+    assert result['answer'] == '¡Hola! ¿En qué te ayudo con tu evento?'
+
+
+def test_natural_response_only_receives_verified_evidence(monkeypatch):
+    monkeypatch.setattr(chat, 'select_evidence', lambda *args: {'in_scope': True, 'mode': 'evidence', 'fields': ['title'], 'sources': [{'documentId': 'd1', 'page': 1, 'quote': 'INVENTADO'}]})
+    def compose(question, data, sources):
+        assert 'Salsa' in data
+        assert 'INVENTADO' not in data and sources == []
+        return 'El evento que tienes guardado es Salsa.'
+    monkeypatch.setattr(chat, 'conversational_answer', compose)
+    result = chat.answer_event('¿Cuál es mi evento?', {'title': 'Salsa'}, [{'id': 'd1', 'filename': 'evento.pdf', 'pages': [{'page': 1, 'text': 'Contenido original'}]}], [])
+    assert result['answer'] == 'El evento que tienes guardado es Salsa.'
+
+
+def test_natural_response_falls_back_when_provider_fails(monkeypatch):
+    from urllib.error import URLError
+    monkeypatch.setenv('GROQ_API_KEY', 'test-key')
+    def unavailable(*args, **kwargs):
+        raise URLError('offline')
+    monkeypatch.setattr(chat, 'urlopen', unavailable)
+    assert chat.conversational_answer('¿Evento?', 'Evento: Salsa', []) == 'Evento: Salsa'

@@ -45,3 +45,6 @@ Las pruebas reales del 17/11/2026, incluida una ejecuci?n SUCCEEDED de Step Func
 
 
 Chat conversacional: 24 pruebas locales aprobadas. Verificado en AWS: saludos y agradecimientos sin llamada al modelo, resumen coloquial del evento y rechazo de consultas ajenas o cambios de instrucciones. Se mantiene la comprobación de citas y el acceso por organizador.
+
+
+Chat natural: 30 pruebas locales aprobadas. El modelo interpreta mensajes informales, errores de teclado y dudas sobre el uso de TicketPass; pide aclaración ante mensajes ambiguos. Las respuestas factuales se redactan a partir de campos y citas previamente verificados, conservando las fuentes visibles. La redacción generativa puede cometer errores y no reemplaza la revisión del organizador. Sin permisos para modificar o publicar desde el chat.
