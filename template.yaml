@@ -1,0 +1,325 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: TicketPass Studio - API Python, DynamoDB, S3 privado y workflow Groq sin memoria
+Parameters:
+  LabRoleName:
+    Type: String
+    Default: LabRole
+    Description: Rol existente que debe permitir Lambda y Step Functions; comprobar el trust policy del laboratorio.
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: Clave Groq. Vacía permite desplegar APIs pero las revisiones IA fallarán explícitamente.
+  FrontendOrigin:
+    Type: String
+    Default: http://127.0.0.1:5173
+    Description: Origen exacto del frontend autorizado para CORS (sin barra final).
+  EnableCloudFront:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: Crear hosting HTTPS para el frontend solo si el laboratorio permite CloudFront.
+Conditions:
+  WithCloudFront: !Equals [!Ref EnableCloudFront, 'true']
+  WithGroq: !Not [!Equals [!Ref GroqApiKey, '']]
+Globals:
+  Function:
+    Runtime: python3.12
+    CodeUri: backend/
+    MemorySize: 512
+    Timeout: 45
+    Architectures: [x86_64]
+    Environment:
+      Variables:
+        STORAGE: dynamodb
+        ALLOW_BASIC_EXTRACTION: 'false'
+        EVENTS_TABLE: !Ref EventsTable
+        IMPORTS_TABLE: !Ref ImportsTable
+        AUTH_TABLE: !Ref AuthTable
+        FILES_BUCKET: !Ref FilesBucket
+        ALLOWED_ORIGINS: !Ref FrontendOrigin
+Resources:
+  Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: dev
+      EndpointConfiguration: REGIONAL
+      BinaryMediaTypes: ['application/pdf', 'text/csv']
+      Cors:
+        AllowOrigin: !Sub "'${FrontendOrigin}'"
+        AllowHeaders: "'Authorization,Content-Type,Idempotency-Key'"
+        AllowMethods: "'GET,POST,PATCH,PUT,OPTIONS'"
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingBurstLimit: 20
+          ThrottlingRateLimit: 10
+  AuthApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+      Handler: api.handler
+      Environment:
+        Variables:
+          SERVICE_NAME: auth
+      Events:
+        Auth:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: '/auth/{proxy+}', Method: ANY}
+  EventsApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+      Handler: api.handler
+      Environment:
+        Variables:
+          SERVICE_NAME: events
+      Events:
+        Root:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: /eventos, Method: ANY}
+        Event:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: '/eventos/{proxy+}', Method: ANY}
+        Catalog:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: /catalogo, Method: GET}
+        CatalogEvent:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: '/catalogo/{proxy+}', Method: GET}
+  ChatApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+      Handler: api.handler
+      Environment:
+        Variables:
+          SERVICE_NAME: chat
+          GROQ_API_KEY: !Ref GroqApiKey
+          GROQ_MODEL: openai/gpt-oss-120b
+      Events:
+        Chat:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: '/asistente/{event_id}', Method: POST}
+  ImportsApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+      Handler: api.handler
+      Environment:
+        Variables:
+          SERVICE_NAME: imports
+          WORKFLOW_ARN: !Ref ImportWorkflow
+          GROQ_ENABLED: !If [WithGroq, 'true', 'false']
+          # Only the workflow agent and the read-only chat function receive the Groq key.
+      Events:
+        Root:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: /importaciones, Method: ANY}
+        Import:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: '/importaciones/{proxy+}', Method: ANY}
+        Files:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: '/archivos/{proxy+}', Method: ANY}
+        Samples:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: '/examples/{proxy+}', Method: GET}
+        Health:
+          Type: Api
+          Properties: {RestApiId: !Ref Api, Path: /health, Method: GET}
+  ExtractPdf:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+      Handler: workflow.extract_task
+  EvaluateDocument:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+      Handler: workflow.analyze_task
+      Timeout: 45
+      Environment:
+        Variables:
+          GROQ_API_KEY: !Ref GroqApiKey
+          GROQ_MODEL: openai/gpt-oss-120b
+  GenerateReport:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+      Handler: workflow.report_task
+  MarkFailure:
+    Type: AWS::Serverless::Function
+    Properties:
+      Role: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+      Handler: workflow.failure_task
+  ImportWorkflow:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      Role: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+      Definition:
+        StartAt: ExtractPdf
+        TimeoutSeconds: 240
+        States:
+          ExtractPdf:
+            Type: Task
+            Resource: !GetAtt ExtractPdf.Arn
+            Next: EvaluateDocument
+            Retry:
+              - ErrorEquals: [Lambda.ServiceException, Lambda.TooManyRequestsException]
+                IntervalSeconds: 2
+                BackoffRate: 2
+                MaxAttempts: 2
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: MarkFailure
+          EvaluateDocument:
+            Type: Task
+            Resource: !GetAtt EvaluateDocument.Arn
+            Next: GenerateReport
+            Retry:
+              - ErrorEquals: [AgentUnavailable, Lambda.ServiceException, Lambda.TooManyRequestsException]
+                IntervalSeconds: 3
+                BackoffRate: 2
+                MaxAttempts: 2
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: MarkFailure
+          GenerateReport:
+            Type: Task
+            Resource: !GetAtt GenerateReport.Arn
+            End: true
+            Retry:
+              - ErrorEquals: [Lambda.ServiceException, Lambda.TooManyRequestsException]
+                IntervalSeconds: 2
+                MaxAttempts: 2
+            Catch:
+              - ErrorEquals: [States.ALL]
+                ResultPath: $.error
+                Next: MarkFailure
+          MarkFailure:
+            Type: Task
+            Resource: !GetAtt MarkFailure.Arn
+            End: true
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: id, AttributeType: S}
+        - {AttributeName: organizerId, AttributeType: S}
+        - {AttributeName: createdAt, AttributeType: S}
+      KeySchema: [{AttributeName: id, KeyType: HASH}]
+      GlobalSecondaryIndexes:
+        - IndexName: ByOwner
+          KeySchema: [{AttributeName: organizerId, KeyType: HASH}, {AttributeName: createdAt, KeyType: RANGE}]
+          Projection: {ProjectionType: ALL}
+  ImportsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: id, AttributeType: S}
+        - {AttributeName: organizerId, AttributeType: S}
+        - {AttributeName: createdAt, AttributeType: S}
+      KeySchema: [{AttributeName: id, KeyType: HASH}]
+      GlobalSecondaryIndexes:
+        - IndexName: ByOwner
+          KeySchema: [{AttributeName: organizerId, KeyType: HASH}, {AttributeName: createdAt, KeyType: RANGE}]
+          Projection: {ProjectionType: ALL}
+  AuthTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: id, AttributeType: S}
+        - {AttributeName: organizerId, AttributeType: S}
+        - {AttributeName: createdAt, AttributeType: S}
+      KeySchema: [{AttributeName: id, KeyType: HASH}]
+      GlobalSecondaryIndexes:
+        - IndexName: ByOwner
+          KeySchema: [{AttributeName: organizerId, KeyType: HASH}, {AttributeName: createdAt, KeyType: RANGE}]
+          Projection: {ProjectionType: ALL}
+      TimeToLiveSpecification: {AttributeName: expiresAt, Enabled: true}
+  FilesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: [!Ref FrontendOrigin]
+            AllowedMethods: [PUT]
+            AllowedHeaders: [Content-Type]
+            MaxAge: 180
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+  FrontendOriginAccess:
+    Type: AWS::CloudFront::OriginAccessControl
+    Condition: WithCloudFront
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-frontend
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: WithCloudFront
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: frontend
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref FrontendOriginAccess
+            S3OriginConfig: {OriginAccessIdentity: ''}
+        DefaultCacheBehavior:
+          TargetOriginId: frontend
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues: {QueryString: false}
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: WithCloudFront
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: cloudfront.amazonaws.com}
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+Outputs:
+  ApiUrl:
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/dev
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  FrontendUrl:
+    Condition: WithCloudFront
+    Value: !Sub https://${FrontendDistribution.DomainName}
+  WorkflowArn:
+    Value: !Ref ImportWorkflow

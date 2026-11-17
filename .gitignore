@@ -1,0 +1,15 @@
+.env*
+!.env.example
+.venv/
+node_modules/
+dist/
+.aws-sam/
+.serverless/
+__pycache__/
+.pytest_cache/
+.local/
+.aws/
+*.pyc
+*.pem
+*.key
+*.zip

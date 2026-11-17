@@ -1,0 +1,432 @@
+{
+  "info": {
+    "name": "TicketPass Studio — recorrido MVP",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Ejecutar en orden. Usa solo un PDF ficticio. Antes de cargar el PDF configura pdfBytes con su tamaño real y selecciona el archivo en la petición PUT. baseUrl debe apuntar al backend local o API Gateway /dev. Las variables token/fileId contienen secretos temporales: no compartir exportaciones con valores."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "pdfBytes",
+      "value": "3257"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "eventId",
+      "value": ""
+    },
+    {
+      "key": "version",
+      "value": "1"
+    },
+    {
+      "key": "fileId",
+      "value": ""
+    },
+    {
+      "key": "uploadUrl",
+      "value": ""
+    },
+    {
+      "key": "importId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 · Crear cuenta de prueba",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/auth/registro",
+        "auth": {
+          "type": "noauth"
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Productora Demo\",\n  \"email\": \"demo-{{$timestamp}}@example.com\",\n  \"password\": \"EjemploLocal2027!\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.response.to.have.status(201);",
+              "pm.collectionVariables.set(\"token\",pm.response.json().token);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 · Crear borrador",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/eventos",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Noche de Salsa\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.response.to.have.status(201);",
+              "const e=pm.response.json(); pm.collectionVariables.set(\"eventId\",e.id); pm.collectionVariables.set(\"version\",e.version);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 · Reservar carga PDF",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/archivos/url-carga",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventId\": \"{{eventId}}\",\n  \"filename\": \"evento-ejemplo.pdf\",\n  \"size\": {{pdfBytes}}\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.response.to.have.status(200);",
+              "const f=pm.response.json();pm.collectionVariables.set(\"fileId\",f.fileId);pm.collectionVariables.set(\"uploadUrl\",f.uploadUrl.startsWith(\"/\")?pm.collectionVariables.get(\"baseUrl\")+f.uploadUrl:f.uploadUrl);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 · Cargar PDF (seleccionar archivo binario)",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/pdf"
+          }
+        ],
+        "url": "{{uploadUrl}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "file",
+          "file": {}
+        },
+        "description": "En local usa Bearer. Para S3 quita Authorization (No Auth): la URL ya está firmada. Body → binary → el PDF ficticio elegido."
+      }
+    },
+    {
+      "name": "05 · Iniciar revisión asíncrona",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Idempotency-Key",
+            "value": "demo-{{$guid}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/importaciones",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventId\": \"{{eventId}}\",\n  \"fileId\": \"{{fileId}}\",\n  \"version\": {{version}}\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.response.to.have.status(202);pm.collectionVariables.set(\"importId\",pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 · Consultar revisión (repetir hasta terminar)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/importaciones/{{importId}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "07 · Descargar CSV privado",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/importaciones/{{importId}}/reporte",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "08 · Confirmar revisión humana y guardar",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/importaciones/{{importId}}/aplicar",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"version\": {{version}},\n  \"title\": \"Noche de Salsa\",\n  \"category\": \"Concierto\",\n  \"date\": \"2027-12-19\",\n  \"time\": \"20:00\",\n  \"timezone\": \"America/Lima\",\n  \"venue\": \"Salón Las Palmeras\",\n  \"city\": \"Lima\",\n  \"description\": \"Música en vivo y una noche para bailar salsa con amigos.\",\n  \"capacity\": 300,\n  \"zones\": [\n    {\n      \"name\": \"General\",\n      \"capacity\": 300,\n      \"price\": 50\n    }\n  ],\n  \"theme\": \"violet\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.response.to.have.status(200);pm.collectionVariables.set(\"version\",pm.response.json().version);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 · Publicar expresamente",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/eventos/{{eventId}}/publicar",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"version\": {{version}}\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.response.to.have.status(200);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 · Ver ficha pública sin sesión",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/catalogo/{{eventId}}",
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.response.to.have.status(200);",
+              "const e=pm.response.json();[\"fileKey\",\"pages\",\"result\",\"organizerId\"].forEach(k=>pm.expect(e).not.to.have.property(k));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 · Consultar el evento por chat privado",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/asistente/{{eventId}}",
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"message\": \"¿Qué fechas aparecen en mis documentos?\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.response.to.have.status(200);",
+              "pm.expect(pm.response.json()).to.have.property(\"sources\");"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
