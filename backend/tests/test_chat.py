@@ -65,3 +65,17 @@ def test_chat_limits_requests_and_fails_honestly_without_key(client, monkeypatch
         assert client.post(path, headers=headers, json={'message': '¿Fecha?'}).status_code == 200
     assert client.post(path, headers=headers, json={'message': '¿Fecha?'}).status_code == 429
     assert client.post(path, headers=headers, json={'message': 'x' * 1001}).status_code == 422
+
+@pytest.mark.parametrize('message', ['hola', '¡Hola!', 'buenos días', 'Holaaa', 'gracias'])
+def test_social_messages_are_friendly_without_model(message, monkeypatch):
+    monkeypatch.setattr(chat, 'select_evidence', lambda *args: pytest.fail('Social reply does not need the model'))
+    result = chat.answer_event(message, {'title': 'Noche de Salsa'}, [], [])
+    assert result['scope'] == 'EVENT'
+    assert 'fuera' not in result['answer']
+
+
+def test_empty_overview_does_not_repeat_missing_fields(monkeypatch):
+    monkeypatch.setattr(chat, 'select_evidence', lambda *args: {'in_scope': True, 'mode': 'overview', 'fields': [], 'sources': []})
+    result = chat.answer_event('¿Qué evento tenemos?', {'title': '', 'status': 'BORRADOR'}, [], ['Completa el nombre.'])
+    assert 'Sin completar' not in result['answer']
+    assert 'adjuntando un PDF' in result['answer']

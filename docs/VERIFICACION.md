@@ -42,3 +42,6 @@ Se eliminó template.yaml y se adoptó serverless.yml con Serverless Framework 3
 ## Verificaci?n posterior al despliegue
 
 Las pruebas reales del 17/11/2026, incluida una ejecuci?n SUCCEEDED de Step Functions y el chat con Groq, est?n en DESPLIEGUE.md. Se corrigi? el bootstrap de Serverless usando un bucket privado externo de artefactos; las funciones de API tienen timeout de 28 segundos y las tareas del workflow conservan 45 segundos. La opci?n publicWebsite solo afecta al frontend est?tico.
+
+
+Chat conversacional: 24 pruebas locales aprobadas. Verificado en AWS: saludos y agradecimientos sin llamada al modelo, resumen coloquial del evento y rechazo de consultas ajenas o cambios de instrucciones. Se mantiene la comprobación de citas y el acceso por organizador.
