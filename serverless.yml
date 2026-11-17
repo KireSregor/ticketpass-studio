@@ -1,0 +1,467 @@
+service: ticketpass-studio
+frameworkVersion: '3'
+configValidationMode: error
+provider:
+  name: aws
+  runtime: python3.11
+  architecture: x86_64
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 45
+  versionFunctions: false
+  endpointType: REGIONAL
+  iam:
+    role:
+      Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+  apiGateway:
+    binaryMediaTypes:
+    - application/pdf
+    - text/csv
+  environment:
+    STORAGE: dynamodb
+    ALLOW_BASIC_EXTRACTION: 'false'
+    EVENTS_TABLE:
+      Ref: EventsTable
+    IMPORTS_TABLE:
+      Ref: ImportsTable
+    AUTH_TABLE:
+      Ref: AuthTable
+    FILES_BUCKET:
+      Ref: FilesBucket
+    ALLOWED_ORIGINS:
+      Ref: FrontendOrigin
+  stackParameters:
+  - ParameterKey: LabRoleName
+    ParameterValue: ${param:labRole, 'LabRole'}
+  - ParameterKey: FrontendOrigin
+    ParameterValue: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+  - ParameterKey: EnableCloudFront
+    ParameterValue: ${param:cloudFront, 'false'}
+  - ParameterKey: GroqApiKey
+    ParameterValue: ${env:GROQ_API_KEY, ''}
+package:
+  artifact: .build/backend.zip
+functions:
+  authApi:
+    handler: api.handler
+    environment:
+      SERVICE_NAME: auth
+    events:
+    - http:
+        path: auth/{proxy+}
+        method: any
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+  eventsApi:
+    handler: api.handler
+    environment:
+      SERVICE_NAME: events
+    events:
+    - http:
+        path: eventos
+        method: any
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+    - http:
+        path: eventos/{proxy+}
+        method: any
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+    - http:
+        path: catalogo
+        method: get
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+    - http:
+        path: catalogo/{proxy+}
+        method: get
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+  chatApi:
+    handler: api.handler
+    environment:
+      SERVICE_NAME: chat
+      GROQ_API_KEY:
+        Ref: GroqApiKey
+      GROQ_MODEL: openai/gpt-oss-120b
+    events:
+    - http:
+        path: asistente/{event_id}
+        method: post
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+  importsApi:
+    handler: api.handler
+    environment:
+      SERVICE_NAME: imports
+      WORKFLOW_ARN:
+        Ref: ImportWorkflow
+      GROQ_ENABLED:
+        Fn::If:
+        - WithGroq
+        - 'true'
+        - 'false'
+    events:
+    - http:
+        path: importaciones
+        method: any
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+    - http:
+        path: importaciones/{proxy+}
+        method: any
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+    - http:
+        path: archivos/{proxy+}
+        method: any
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+    - http:
+        path: examples/{proxy+}
+        method: get
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+    - http:
+        path: health
+        method: get
+        cors:
+          origin: ${param:frontendOrigin, 'http://127.0.0.1:5173'}
+          headers:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+  extractPdf:
+    handler: workflow.extract_task
+  evaluateDocument:
+    handler: workflow.analyze_task
+    environment:
+      GROQ_API_KEY:
+        Ref: GroqApiKey
+      GROQ_MODEL: openai/gpt-oss-120b
+    timeout: 45
+  generateReport:
+    handler: workflow.report_task
+  markFailure:
+    handler: workflow.failure_task
+resources:
+  Parameters:
+    LabRoleName:
+      Type: String
+      Default: LabRole
+      Description: Rol existente que debe permitir Lambda y Step Functions; comprobar el trust policy del laboratorio.
+    GroqApiKey:
+      Type: String
+      NoEcho: true
+      Default: ''
+      Description: Clave Groq. Vacía permite desplegar APIs pero las revisiones IA fallarán explícitamente.
+    FrontendOrigin:
+      Type: String
+      Default: http://127.0.0.1:5173
+      Description: Origen exacto del frontend autorizado para CORS (sin barra final).
+    EnableCloudFront:
+      Type: String
+      AllowedValues:
+      - 'true'
+      - 'false'
+      Default: 'false'
+      Description: Crear hosting HTTPS para el frontend solo si el laboratorio permite CloudFront.
+  Conditions:
+    WithCloudFront:
+      Fn::Equals:
+      - Ref: EnableCloudFront
+      - 'true'
+    WithGroq:
+      Fn::Not:
+      - Fn::Equals:
+        - Ref: GroqApiKey
+        - ''
+  Resources:
+    ImportWorkflow:
+      Type: AWS::StepFunctions::StateMachine
+      Properties:
+        Definition:
+          StartAt: ExtractPdf
+          TimeoutSeconds: 240
+          States:
+            ExtractPdf:
+              Type: Task
+              Resource:
+                Fn::GetAtt:
+                - ExtractPdfLambdaFunction
+                - Arn
+              Next: EvaluateDocument
+              Retry:
+              - ErrorEquals:
+                - Lambda.ServiceException
+                - Lambda.TooManyRequestsException
+                IntervalSeconds: 2
+                BackoffRate: 2
+                MaxAttempts: 2
+              Catch:
+              - ErrorEquals:
+                - States.ALL
+                ResultPath: $.error
+                Next: MarkFailure
+            EvaluateDocument:
+              Type: Task
+              Resource:
+                Fn::GetAtt:
+                - EvaluateDocumentLambdaFunction
+                - Arn
+              Next: GenerateReport
+              Retry:
+              - ErrorEquals:
+                - AgentUnavailable
+                - Lambda.ServiceException
+                - Lambda.TooManyRequestsException
+                IntervalSeconds: 3
+                BackoffRate: 2
+                MaxAttempts: 2
+              Catch:
+              - ErrorEquals:
+                - States.ALL
+                ResultPath: $.error
+                Next: MarkFailure
+            GenerateReport:
+              Type: Task
+              Resource:
+                Fn::GetAtt:
+                - GenerateReportLambdaFunction
+                - Arn
+              End: true
+              Retry:
+              - ErrorEquals:
+                - Lambda.ServiceException
+                - Lambda.TooManyRequestsException
+                IntervalSeconds: 2
+                MaxAttempts: 2
+              Catch:
+              - ErrorEquals:
+                - States.ALL
+                ResultPath: $.error
+                Next: MarkFailure
+            MarkFailure:
+              Type: Task
+              Resource:
+                Fn::GetAtt:
+                - MarkFailureLambdaFunction
+                - Arn
+              End: true
+        RoleArn:
+          Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${LabRoleName}
+        StateMachineType: STANDARD
+    EventsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: organizerId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        GlobalSecondaryIndexes:
+        - IndexName: ByOwner
+          KeySchema:
+          - AttributeName: organizerId
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+    ImportsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: organizerId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        GlobalSecondaryIndexes:
+        - IndexName: ByOwner
+          KeySchema:
+          - AttributeName: organizerId
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+    AuthTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: organizerId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+        KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        GlobalSecondaryIndexes:
+        - IndexName: ByOwner
+          KeySchema:
+          - AttributeName: organizerId
+            KeyType: HASH
+          - AttributeName: createdAt
+            KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        TimeToLiveSpecification:
+          AttributeName: expiresAt
+          Enabled: true
+    FilesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+        CorsConfiguration:
+          CorsRules:
+          - AllowedOrigins:
+            - Ref: FrontendOrigin
+            AllowedMethods:
+            - PUT
+            AllowedHeaders:
+            - Content-Type
+            MaxAge: 180
+    FrontendBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+    FrontendOriginAccess:
+      Type: AWS::CloudFront::OriginAccessControl
+      Condition: WithCloudFront
+      Properties:
+        OriginAccessControlConfig:
+          Name:
+            Fn::Sub: ${AWS::StackName}-frontend
+          OriginAccessControlOriginType: s3
+          SigningBehavior: always
+          SigningProtocol: sigv4
+    FrontendDistribution:
+      Type: AWS::CloudFront::Distribution
+      Condition: WithCloudFront
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          DefaultRootObject: index.html
+          PriceClass: PriceClass_100
+          Origins:
+          - Id: frontend
+            DomainName:
+              Fn::GetAtt:
+              - FrontendBucket
+              - RegionalDomainName
+            OriginAccessControlId:
+              Ref: FrontendOriginAccess
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+          DefaultCacheBehavior:
+            TargetOriginId: frontend
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+            - GET
+            - HEAD
+            CachedMethods:
+            - GET
+            - HEAD
+            ForwardedValues:
+              QueryString: false
+    FrontendBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Condition: WithCloudFront
+      Properties:
+        Bucket:
+          Ref: FrontendBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource:
+              Fn::Sub: ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn:
+                  Fn::Sub: arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+  Outputs:
+    ApiUrl:
+      Value:
+        Fn::Sub: https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}
+    FrontendBucketName:
+      Value:
+        Ref: FrontendBucket
+    FrontendUrl:
+      Condition: WithCloudFront
+      Value:
+        Fn::Sub: https://${FrontendDistribution.DomainName}
+    WorkflowArn:
+      Value:
+        Ref: ImportWorkflow

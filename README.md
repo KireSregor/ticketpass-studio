@@ -13,7 +13,7 @@ MVP para organizadores: crear un borrador, importar un PDF con texto, comprobar 
 - Las propuestas no se aplican automáticamente. Una importación antigua no puede sobrescribir una versión nueva del borrador.
 - Publicación manual con validación de fecha futura, campos, precios, cupos y aforo. La ficha pública excluye documentos y análisis internos.
 - Historial y CSV protegido contra fórmulas de hoja de cálculo.
-- Plantilla AWS SAM: API Gateway, funciones Lambda separadas, tablas propias por servicio, S3 privado y Step Functions Standard.
+- Infraestructura con Serverless Framework: API Gateway, funciones Lambda separadas, tablas propias por servicio, S3 privado y Step Functions Standard.
 
 **No incluye:** pagos reales, compra de entradas, reembolsos, OCR, predicción de demanda ni precios de mercado. Los archivos de ejemplo son ficticios y están identificados como tales.
 
@@ -48,7 +48,7 @@ Si `python` abre Microsoft Store, usa la ruta de un Python instalado o la del ru
 
 Puedes ejecutar `scripts/Configurar-IA.ps1` para introducir la clave de forma oculta. El script guarda `.env` en la raíz, excluido de Git. Alternativamente copia `.env.example` como `.env` y completa `GROQ_API_KEY`. Reinicia el backend.
 
-El modelo por defecto es `openai/gpt-oss-120b`, configurable por `GROQ_MODEL`. La cuenta y el modelo deben permitir JSON Schema. No se guardan claves en el frontend ni en las respuestas de la API.
+El modelo por defecto es `openai/gpt-oss-120b`, configurable por `GROQ_MODEL`. La cuenta y el modelo deben permitir JSON Schema. No se guardan claves en el frontend ni en las respuestas de la API. El despliegue recibe GROQ_API_KEY del entorno; ver docs/AWS.md.
 
 Sin clave, el modo local puede usar `ALLOW_BASIC_EXTRACTION=true`: busca etiquetas explícitas como `Evento:`, `Fecha:` o `Lugar:`. **No es IA y la interfaz lo advierte.** En AWS está desactivado por defecto. Una revisión fallida conserva el borrador y permite completarlo manualmente.
 
@@ -81,7 +81,7 @@ Por defecto se guardan en `.local/` y sobreviven a reinicios. `DATA_DIR` permite
 
 ## AWS Academy
 
-Ver `docs/AWS.md`. `template.yaml` pasó validación estática con cfn-lint; **no significa que esté desplegado ni que el laboratorio tenga permisos**. Antes de publicar en AWS, comprobar el rol existente, credenciales temporales, saldo, acceso a Step Functions y salida a Groq.
+Ver `docs/AWS.md`. `serverless.yml` define el despliegue; **no significa que esté desplegado ni que el laboratorio tenga permisos**. Antes de publicar en AWS, comprobar el rol existente, credenciales temporales, saldo, acceso a Step Functions y salida a Groq.
 
 ## Relación con el trabajo anterior
 
@@ -91,7 +91,7 @@ Referencia funcional y tecnológica:
 - https://github.com/jesusda01/proyecto-ticketpass-chat-ia
 - https://github.com/utec-cdia-v5/workflow_ia
 
-Se conserva la marca, el dominio de eventos y el enfoque React/Python/serverless. Esta implementación nueva sustituye el chat con memoria por un flujo de publicación; no usa los modelos entrenados con datos sintéticos del proyecto anterior. AWS SAM define la infraestructura nueva en lugar de copiar su `serverless.yml`.
+Se conserva la marca, el dominio de eventos y el enfoque React/Python/serverless. Esta implementación nueva sustituye el chat con memoria por un flujo de publicación; no usa los modelos entrenados con datos sintéticos del proyecto anterior. Serverless Framework define la infraestructura renovada en `serverless.yml`, con la misma herramienta de despliegue del proyecto anterior.
 
 ## Estructura
 
@@ -100,7 +100,7 @@ frontend/       React + Vite, interfaz y estilos
 backend/        API, autenticación, almacenamiento y pipeline
 backend/tests/  Pruebas de privacidad, versiones, PDFs y publicación
 backend/assets/ PDF ficticio de demostración
-template.yaml   Arquitectura AWS SAM
+serverless.yml  Infraestructura Serverless Framework
 docs/           Despliegue, verificación y Postman
 scripts/        Configuración y generación del ejemplo
 ```
@@ -123,3 +123,7 @@ PDF adicional para probar preguntas sobre condiciones: `backend/assets/contrato-
 Actualización de interfaz: la subida está integrada en el clip del chat y admite arrastrar un PDF sobre la conversación. El progreso aparece como documento adjunto y la revisión se abre en una ventana. Solo los mensajes tienen desplazamiento; el campo para escribir permanece fijo. La conversación se conserva al pasar a Información o Entradas y volver, durante la misma visita al evento.
 
 También puedes entrar desde Backstage → Asistente IA: elige o busca un evento existente, o usa Nuevo evento con IA para empezar.
+
+## Herramienta de despliegue
+
+Se utiliza **Serverless Framework**, igual que en el proyecto anterior. Ejecutar `npm ci` en la raíz, `python scripts/package_backend.py` y `npx serverless package`. Para desplegar: `npx serverless deploy`. Las instrucciones completas y los permisos de AWS Academy están en docs/AWS.md. SAM y Docker no son necesarios.

@@ -1,0 +1,14 @@
+{
+  "name": "ticketpass-studio-infrastructure",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "package:backend": "python scripts/package_backend.py",
+    "infra:package": "serverless package",
+    "deploy": "serverless deploy",
+    "info": "serverless info"
+  },
+  "devDependencies": {
+    "serverless": "3.40.0"
+  }
+}

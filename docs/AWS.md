@@ -1,85 +1,59 @@
-# Despliegue previsto en AWS Academy
+# Despliegue con Serverless Framework en AWS Academy
 
-## Estado
-
-La plantilla existe y puede validarse estáticamente. El despliegue en una cuenta real y sus permisos deben verificarse con las credenciales del laboratorio. No se incluye ninguna credencial.
+La configuración única de infraestructura es `serverless.yml`. No requiere SAM ni Docker. Serverless Framework está fijado a 3.40.0 en package-lock.json para este laboratorio; la actualización del framework debe evaluarse antes de uso comercial.
 
 ## Recursos
 
-| Componente | Recurso |
-|---|---|
-| Autenticación | AuthApi Lambda + AuthTable (usuarios, sesiones y metadatos privados de archivos) |
-| Eventos y catálogo | EventsApi Lambda + EventsTable |
-| Importaciones y reportes | ImportsApi Lambda + ImportsTable |
-| Documentos | FilesBucket S3 privado, cargas firmadas con vencimiento |
-| Coordinación | ImportWorkflow Step Functions Standard |
-| Etapas | ExtractPdf → EvaluateDocument → GenerateReport; errores a MarkFailure |
-| Frontend | FrontendBucket privado, CloudFront opcional para HTTPS |
+API Gateway REST, AuthApi, EventsApi, ImportsApi y ChatApi en Lambda; tablas EventsTable, ImportsTable y AuthTable; documentos privados en S3; Step Functions Standard con ExtractPdf → EvaluateDocument → GenerateReport y MarkFailure. El frontend usa un bucket privado y CloudFront opcional. El chat consulta el evento autorizado sin memoria de mensajes ni permisos de publicación. La publicación sigue siendo una acción autenticada y explícita del organizador.
 
-Cada Lambda de API atiende solo las rutas de su servicio (`SERVICE_NAME`). En local, una única app reúne esas rutas para facilitar las pruebas. La verificación de sesión y propiedad se ejecuta en el backend en ambas modalidades.
+Se reutiliza el rol existente LabRole; no se crean roles IAM nuevos. El laboratorio debe permitir pasar ese rol y su trust policy debe admitir Lambda y Step Functions. Las credenciales temporales deben estar vigentes. La región por defecto es us-east-1.
 
-Las tareas del workflow acceden a la capa de almacenamiento compartida de Importaciones; **no existe un endpoint público del agente**. Esta es una simplificación frente al diagrama de planificación que mostraba una API de agente independiente. Se mantienen las APIs de Eventos e Importaciones con sus bases de datos propias y la orquestación con Step Functions.
+## Preparación (sin Docker)
 
-Los candidatos quedan separados del evento. El organizador los aplica mediante `POST /importaciones/{id}/aplicar` con versión esperada. Publicar es una llamada diferente, explícita y autenticada.
+Requisitos: Node.js 20+, Python 3.12+ y AWS CLI con el perfil del laboratorio configurado localmente. Desde la raíz:
 
-## Requisitos del laboratorio
-
-- AWS CLI y AWS SAM CLI. Docker para `sam build --use-container`, que empaqueta dependencias Python para Linux.
-- Credenciales temporales vigentes y región `us-east-1`.
-- Un rol existente (por defecto `LabRole`) con permisos de DynamoDB, S3, Lambda y Step Functions para los recursos del stack.
-- Su trust policy debe admitir los servicios Lambda y Step Functions. El stack no modifica ese rol ni crea políticas amplias automáticamente.
-- CloudFormation debe poder crear los recursos declarados y pasar el rol a los servicios.
-- Salida HTTPS de Lambda a Groq. Las tareas no se conectan a una VPC.
-- CloudFront es opcional; si no está permitido, el frontend puede ejecutarse localmente contra la API AWS. El bucket permanece privado.
-
-Si Step Functions no está permitido, el nivel 4 no queda validado. No se presenta la ejecución local como evidencia de ejecución AWS.
-
-## Pasos
-
-Desde la raíz:
-
-```text
-sam validate --lint
-sam build --use-container
-sam deploy --guided
+```powershell
+npm ci
+python scripts/package_backend.py
+npx serverless package --stage dev --region us-east-1
 ```
 
-Indicar región y nombre de stack. Configurar `LabRoleName`, `FrontendOrigin` y la clave `GroqApiKey` mediante el formulario/prompt seguro de despliegue, no en argumentos visibles de shell. La clave se declara `NoEcho` y solo se entrega a la función EvaluateDocument. No versionar parámetros con secretos. También puede configurarse después en las variables de entorno de esa Lambda desde la consola autorizada.
+El script descarga únicamente wheels para Python 3.11 / Linux x86_64 y crea `.build/backend.zip`. No copia entornos Windows, tests, archivos .env ni datos de organizadores. Si Python no está en PATH, usa la ruta absoluta del intérprete instalado. `.build/`, `.serverless/` y `node_modules/` están excluidos de Git.
 
-Outputs: `ApiUrl`, `WorkflowArn`, `FrontendBucketName` y, si se habilitó, `FrontendUrl`.
+Antes de desplegar, comprobar identidad y rol con `aws sts get-caller-identity` y la consola del laboratorio. Un empaquetado correcto no verifica permisos efectivos, saldo, conectividad o cuotas de AWS.
 
-Para probar desde Vite local, guardar en `frontend/.env.local`:
+## Clave Groq
 
-```dotenv
-VITE_API_BASE=https://ID.execute-api.us-east-1.amazonaws.com/dev
+La clave se entrega mediante la variable de entorno GROQ_API_KEY del proceso de despliegue. No escribirla en el comando ni en serverless.yml. Ejemplo para introducirla sin eco en PowerShell:
+
+```powershell
+$groqSecure = Read-Host 'Clave Groq' -AsSecureString
+$env:GROQ_API_KEY = [System.Net.NetworkCredential]::new('', $groqSecure).Password
+npx serverless deploy --stage dev --region us-east-1
+Remove-Item Env:GROQ_API_KEY
 ```
 
-Para hosting HTTPS:
+Serverless pasa el valor al parámetro CloudFormation GroqApiKey, marcado NoEcho. Solo ChatApi y EvaluateDocument lo reciben. Los artefactos locales de `.serverless/` pueden contener parámetros sensibles: no publicarlos ni compartirlos. No ejecutar `serverless print` con claves reales configuradas. Sin clave, las revisiones fallan de forma explícita; la ficha manual sigue funcionando.
 
-1. Desplegar con `EnableCloudFront=true` si está permitido.
-2. Obtener `FrontendUrl` y actualizar `FrontendOrigin` a ese origen exacto. Redeploy para actualizar CORS de API y S3.
-3. Configurar `VITE_API_BASE` y ejecutar `npm run build`.
-4. Subir el contenido de `frontend/dist` al bucket frontend devuelto por el stack. No subir `.env` ni los documentos privados a ese bucket.
-5. Abrir la URL HTTPS e invalidar la caché de `index.html` cuando se publique una versión nueva.
+## Despliegue
 
-S3 website no ofrece HTTPS; esta plantilla utiliza S3 privado como origen de CloudFront, no un website público HTTP.
+```powershell
+npx serverless deploy --stage dev --region us-east-1
+npx serverless info --stage dev --region us-east-1
+```
 
-## Persistencia y estados
+Parámetros opcionales: `--param="labRole=LabRole"`, `--param="frontendOrigin=https://tu-dominio"`, `--param="cloudFront=true"`. CloudFront solo debe habilitarse si el laboratorio lo permite. El stage predeterminado es dev; cambiarlo crea otro stack.
 
-Las tablas contienen `id`, `organizerId`, `createdAt`, `version` y `data` (JSON). El índice `ByOwner` permite listar recursos de un organizador. La representación JSON facilita compartir lógica local/AWS en este MVP; no es un esquema optimizado para todo tipo de consultas. AuthTable activa TTL en `expiresAt`; la API valida además el vencimiento de la sesión en cada petición.
+Outputs: ApiUrl, WorkflowArn, FrontendBucketName y FrontendUrl cuando CloudFront está habilitado. Para pruebas locales, configurar `frontend/.env.local` con `VITE_API_BASE=<ApiUrl>` y reiniciar Vite. Los eventos locales no se migran automáticamente a DynamoDB.
 
-- Evento: BORRADOR / PUBLICADO.
-- Importación: EN_PROCESO / LISTA / REQUIERE_REVISION / FALLIDA.
-- Etapa: QUEUED / EXTRACT / ANALYZE / REPORT / DONE / FAILED.
-- Reporte: READY / PENDING. Un fallo de CSV no borra los candidatos.
+Para hosting HTTPS: desplegar con CloudFront, obtener FrontendUrl, volver a desplegar con frontendOrigin igual a ese origen exacto (CORS de API y S3), compilar frontend con VITE_API_BASE de AWS y subir únicamente frontend/dist al bucket frontend. Los PDF privados nunca se suben a ese bucket.
 
-Reintentos de Groq acotados en Step Functions. Los errores de documento no se reintentan. Las tareas reutilizan resultados ya persistidos; el inicio usa una clave de idempotencia. El timeout global necesita monitorización operativa antes de uso comercial; no se ha probado cancelación o interrupción del servicio AWS.
+## Validación pendiente en AWS
 
-## Costos
+El paquete puede validarse localmente sin crear recursos. Falta comprobar el despliegue real, permisos del rol, salida a Groq, ejecución de Step Functions, carga firmada a S3 y consulta de resultados en la web. Si Step Functions no está permitido, no se considera demostrado el nivel 4.
 
-La plantilla no crea presupuesto ni una estimación en Calculator. Deben medirse transiciones, solicitudes, tiempos Lambda, unidades DynamoDB, objetos/tráfico S3, logs, hosting y tokens Groq. Las cifras de la presentación son supuestos previos, no una factura ni costo validado de este despliegue.
+El chat mantiene el límite de 10 consultas por minuto por organizador. El API Gateway generado usa las cuotas de la cuenta; no se ha configurado un límite global adicional de stage en esta versión.
 
-Fuentes: [SAM](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/what-is-sam.html), [Step Functions](https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html), [S3 firmado](https://docs.aws.amazon.com/AmazonS3/latest/userguide/PresignedUrlUploadObject.html), [Groq JSON Schema](https://console.groq.com/docs/structured-outputs).
+Fuentes: [recursos de Serverless](https://www.serverless.com/framework/docs/providers/aws/guide/resources), [empaquetado](https://www.serverless.com/framework/docs/providers/aws/guide/packaging).
 
-
-Actualización: el chat privado usa ChatApi (`POST /asistente/{event_id}`), independiente del procesamiento de PDF con Step Functions. ChatApi y EvaluateDocument reciben GROQ_API_KEY. El chat usa el contexto del evento autorizado sin guardar historial conversacional; no modifica eventos ni publica.
+Lambda utiliza Python 3.11, compatible con la versión fijada de Serverless Framework. El script puede ejecutarse con un Python local 3.12 o superior porque descarga los wheels de destino explícitamente.

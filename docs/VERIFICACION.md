@@ -6,14 +6,14 @@ Fecha: 17 de noviembre de 2026. Entorno: Windows, ejecución local con SQLite y 
 
 - 18 pruebas automatizadas aprobadas del backend: autenticación y cierre de sesión, aislamiento entre organizadores, publicación y campos públicos, control de versiones, idempotencia, PDFs incompatibles, evidencia literal y escape CSV. Ejecutar `python -m pytest tests -q` en backend.
 - Compilación de producción del frontend con `npm run build`.
-- Validación estática AWS SAM con `cfn-lint template.yaml`.
+- Configuración Serverless Framework validada con `serverless package` y plantilla CloudFormation generada validada con cfn-lint.
 - Llamada real a Groq con respuesta estructurada, modelo `openai/gpt-oss-120b`. Se corrigió el bloqueo 403 del cliente HTTP enviando User-Agent explícito. No se almacenó la clave en el código ni en este paquete.
 - Recorrido en navegador: cuenta ficticia, borrador, carga del PDF de ejemplo, revisión por Groq, detección de dos fechas contradictorias con cita/página, selección del 19/12/2027, guardado y publicación explícita. Se conservó el borrador ante una llamada fallida anterior.
 - Verificación visual del escritorio y de la ficha pública; panel y ficha probados también a 390 × 844, sin desbordamiento horizontal y con menú móvil funcional.
 
 ## Alcance y pendientes
 
-La ejecución local usa tareas en segundo plano y SQLite. El template AWS usa Step Functions, Lambda, API Gateway, DynamoDB y S3. No se ha desplegado en AWS Academy: faltan credenciales temporales y comprobar permisos del rol. La validación estática no verifica esos permisos, conectividad o cuotas.
+La ejecución local usa tareas en segundo plano y SQLite. La infraestructura Serverless usa Step Functions, Lambda, API Gateway, DynamoDB y S3. No se ha desplegado en AWS Academy: faltan credenciales temporales y comprobar permisos del rol. La validación estática no verifica esos permisos, conectividad o cuotas.
 
 La colección Postman está preparada, pero no se ha ejecutado dentro de la aplicación Postman. Las pruebas automatizadas equivalentes y el recorrido de navegador no sustituyen las capturas Postman que pide el docente.
 
@@ -34,3 +34,7 @@ Se eliminó el panel separado de subida. Clip y arrastre se integran en el chat,
 Vista lateral recuperada: en escritorio se muestra la ficha junto al chat, tanto para borradores como para eventos publicados. La página mantiene el alto del viewport (883 px). En 390 × 844 el panel lateral se oculta, no hay desbordamiento y el botón Vista previa abre correctamente la ficha en una ventana. Compilación de producción aprobada.
 
 Acceso desde Backstage añadido: menú Asistente IA y enlace en el banner de Mis eventos. Se verificó búsqueda de evento y apertura del chat seleccionado por la ruta /assistant/{id}; conserva autorización por evento en el backend. Compilación aprobada.
+
+## Migración de la herramienta de despliegue
+
+Se eliminó template.yaml y se adoptó serverless.yml con Serverless Framework 3.40.0, Python 3.11 en Lambda y empaquetado de wheels Linux sin Docker. La caché global de Serverless no fue escribible en este entorno incluso tras autorizarla; para la validación se aisló la caché en work mediante un adaptador de prueba, sin modificar el framework ni el código publicado. `serverless package` y cfn-lint pasaron sin credenciales reales y sin crear recursos AWS.
