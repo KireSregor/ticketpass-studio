@@ -2,6 +2,7 @@ import EventChat from './EventChat.jsx';
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ArrowRight, ArrowLeft, Plus, Search, LayoutGrid, FileText, LogOut, Ticket, Sparkles, Check, Calendar, MapPin, ChevronRight, Download, X, AlertCircle, CheckCircle2, Menu, ExternalLink, LockKeyhole, LoaderCircle, Clock3, Users, Trash2, Eye, Save, Layers, FileCheck2 } from 'lucide-react';
 import { api, apiUrl, token, setToken, downloadReport } from './api.js';
+import { sameReviewValue, startTime } from './review.js';
 
 const INITIAL = { title: '', category: 'Concierto', date: '', time: '', timezone: 'America/Lima', venue: '', city: '', description: '', capacity: 0, zones: [], theme: 'violet' };
 const LABELS = { title: 'Nombre del evento', date: 'Fecha', time: 'Hora', venue: 'Lugar', city: 'Ciudad', description: 'Descripción', capacity: 'Aforo total', zones: 'Zonas y entradas' };
@@ -107,7 +108,7 @@ function Dashboard({ events, refresh, user, notify, onEventChanged }) {
 
 function normalizeCandidate(field, candidate) {
   const value = candidate.parsed ?? candidate.value;
-  if (field === 'zones') return value;
+  if (field === 'zones') return Array.isArray(value) ? value : null;
   if (field === 'capacity') { const n = Number(String(value).replace(/\D/g, '')); return n || 0; }
   if (field === 'date') {
     if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -118,32 +119,102 @@ function normalizeCandidate(field, candidate) {
     if (numeric) return `${numeric[3]}-${numeric[2]}-${numeric[1]}`;
     return null;
   }
-  if (field === 'time') { const match = String(value).match(/^(\d{1,2}):(\d{2})$/); return match && Number(match[1]) < 24 && Number(match[2]) < 60 ? `${match[1].padStart(2, '0')}:${match[2]}` : null; }
+  if (field === 'time') return startTime(value);
   return value;
 }
 
-function ImportReview({ record, event, onChoose, onApply, busy, notify }) {
+function ImportReview({ record, event, choices, onChoose, onRemove, onApply, busy, dirty, error, notify }) {
   if (!record) return null;
   const running = record.status === 'EN_PROCESO'; const stale = record.inputVersion !== event.version;
   if (running) return <div className="progress-panel" role="status"><LoaderCircle className="spin" size={24} /><div><h3>{record.message}</h3><p>Tu documento se procesa en segundo plano. El borrador está guardado.</p><div className="progress-track"><span /></div></div></div>;
   if (record.status === 'FALLIDA') return <div className="error-box"><AlertCircle size={22} /><div><strong>No pudimos completar esta importación</strong><p>{record.message}</p><small>Puedes subir otro archivo o completar los campos manualmente.</small></div></div>;
   const basic = record.mode === 'BASIC';
-  return <section className="review-panel"><div className="section-title"><span className="section-icon"><FileCheck2 size={20} /></span><div><h2>{basic ? 'Datos básicos extraídos' : 'Tu documento ya tiene un borrador'}</h2><p>{record.filename} · {record.pageCount} {record.pageCount === 1 ? 'página' : 'páginas'}</p></div></div>{basic && <div className="notice amber"><AlertCircle size={17} /><span>Esta revisión se realizó con extracción básica, sin IA. Revisa todos los campos.</span></div>}{stale && <div className="notice amber"><Clock3 size={17} /><span>El borrador se actualizó después de este análisis. Tus datos guardados están en el formulario. Para aplicar nuevas propuestas, importa el documento otra vez.</span></div>}{record.result.warnings.filter(w => !w.startsWith('Extracción básica')).map((warning, i) => <div className="review-warning" key={i}>{warning}</div>)}<div className="source-list">{Object.entries(record.result.fields).filter(([, values]) => values.length).map(([field, values]) => <div className="source-field" key={field}><div className="source-field-title"><strong>{LABELS[field]}</strong><span className={values.length > 1 ? 'source-conflict' : 'source-found'}>{values.length > 1 ? 'Confirma una opción' : 'Encontrado'}</span></div>{values.map((candidate, i) => <div className="source-candidate" key={i}><span className="source-value">{field === 'zones' ? candidate.parsed.map(z => `${z.name}: ${z.capacity} cupos · ${money(z.price)}`).join(' / ') : candidate.value}</span><blockquote>“{candidate.quote}”<cite>Página {candidate.page}</cite></blockquote><button className="text-button" disabled={stale} onClick={() => onChoose(field, candidate)}>Usar este dato<ArrowRight size={14} /></button></div>)}</div>)}</div>{record.missing?.length > 0 && <p className="muted-copy">Completa manualmente: {record.missing.map(k => LABELS[k]).join(', ')}.</p>}<div className="panel-actions"><button className="button secondary" onClick={() => downloadReport(record.id).catch(err => notify(err.message, 'error'))} disabled={record.reportStatus !== 'READY'}><Download size={16} />Descargar CSV</button><button className="button primary" onClick={onApply} disabled={busy || stale}><Check size={16} />Guardar revisión</button></div><small className="helper">Cada dato queda pendiente hasta que lo revises. Tus precios y la publicación dependen de tu confirmación.</small></section>;
+  const count = Object.keys(choices).length;
+  return <section className="review-panel">
+    <div className="section-title">
+      <span className="section-icon"><FileCheck2 size={20} /></span>
+      <div>
+        <h2>{basic ? 'Datos básicos extraídos' : 'Revisa las propuestas del PDF'}</h2>
+        <p>{record.filename} · {record.pageCount} {record.pageCount === 1 ? 'página' : 'páginas'}</p>
+      </div>
+    </div>
+    {basic && <div className="notice amber"><AlertCircle size={17} /><span>Esta revisión se realizó con extracción básica, sin IA. Revisa todos los campos.</span></div>}
+    {stale && <div className="notice amber"><Clock3 size={17} /><span>El borrador se actualizó después de este análisis. Tus datos guardados están en el formulario. Para aplicar nuevas propuestas, importa el documento otra vez.</span></div>}
+    {record.result.warnings.filter(w => !w.startsWith('Extracción básica')).map(warning => <div className="review-warning" key={warning}>{warning}</div>)}
+    <div className="source-list">
+      {Object.entries(record.result.fields).filter(([, values]) => values.length).map(([field, values]) =>
+        <div className="source-field" key={field}>
+          <div className="source-field-title">
+            <strong>{LABELS[field]}</strong>
+            <span className={values.length > 1 ? 'source-conflict' : 'source-found'}>{values.length > 1 ? 'Confirma una opción' : 'Encontrado'}</span>
+          </div>
+          {values.map((candidate, i) => {
+            const value = normalizeCandidate(field, candidate);
+            const selected = choices[field]?.index === i;
+            const saved = sameReviewValue(field, value, event[field]);
+            return <div className={`source-candidate${selected ? ' source-candidate-selected' : ''}`} key={i}>
+              <span className="source-value">{field === 'zones' && value ? value.map(z => `${z.name}: ${z.capacity} cupos · ${money(z.price)}`).join(' / ') : candidate.value}</span>
+              <blockquote>“{candidate.quote}”<cite>Página {candidate.page}</cite></blockquote>
+              {field === 'time' && value && value !== candidate.value && <p className="review-time">Hora de inicio que se aplicará: <strong>{value}</strong></p>}
+              <div className="review-candidate-actions">
+                {selected ? <>
+                  <span className="review-selected"><Check size={15} />Seleccionado</span>
+                  <button type="button" className="text-button" disabled={stale || busy} onClick={() => onRemove(field)} aria-label={`Quitar ${LABELS[field]}`}><X size={14} />Quitar</button>
+                </> : value === null ? <span className="muted-copy">Completa este dato en {field === 'zones' ? 'Entradas' : 'Información'}.</span> : saved && !choices[field] ?
+                  <span className="review-selected"><Check size={15} />Ya guardado</span> :
+                  <button type="button" className="text-button" disabled={stale || busy} onClick={() => onChoose(field, value, i)} aria-label={`Usar este dato: ${LABELS[field]}`}>Usar este dato<ArrowRight size={14} /></button>}
+              </div>
+            </div>;
+          })}
+        </div>)}
+    </div>
+    {record.missing?.length > 0 && <p className="muted-copy">Sin propuesta del PDF: {record.missing.map(k => LABELS[k]).join(', ')}. Puedes completar esos campos en el formulario.</p>}
+    <ErrorBox error={error} />
+    <div className="panel-actions">
+      <span className="review-selection-count" role="status">{count === 1 ? '1 campo seleccionado' : `${count} campos seleccionados`}</span>
+      <button className="button secondary" onClick={() => downloadReport(record.id).catch(err => notify(err.message, 'error'))} disabled={record.reportStatus !== 'READY'}><Download size={16} />Descargar CSV</button>
+      <button className="button primary" onClick={onApply} disabled={busy || stale || !dirty}><Check size={16} />Guardar revisión</button>
+    </div>
+    <small className="helper">Las propuestas se guardan en el borrador cuando confirmas la revisión.</small>
+  </section>;
 }
 
 function Editor({ id, refresh, notify, onEventChanged, backTo = '/events' }) {
   const [manageEvent, setManageEvent] = useState(false);
-  const [event, setEvent] = useState(null), [form, setForm] = useState(INITIAL), [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState(null), [activeImport, setActiveImport] = useState(null), [tab, setTab] = useState('assistant'), [preview, setPreview] = useState(false), [confirm, setConfirm] = useState(false), [inspectImport, setInspectImport] = useState(false);
-  useEffect(() => { let alive = true; setLoading(true); api(`/eventos/${id}`).then(data => { if (alive) { setEvent(data); setForm(fieldsOf(data)); setDirty(false); } }).catch(err => alive && setError(err)).finally(() => alive && setLoading(false)); api('/importaciones').then(data => { if (alive) setActiveImport(data.items.find(row => row.eventId === id) || null); }).catch(() => {}); return () => { alive = false; }; }, [id]);
+  const [event, setEvent] = useState(null), [form, setForm] = useState(INITIAL), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState(null), [activeImport, setActiveImport] = useState(null), [tab, setTab] = useState('assistant'), [preview, setPreview] = useState(false), [confirm, setConfirm] = useState(false), [inspectImport, setInspectImport] = useState(false);
+  const [choices, setChoices] = useState({});
+  const dirty = Boolean(event && Object.keys(INITIAL).some(key => !sameReviewValue(key, form[key], event[key] ?? INITIAL[key])));
+  useEffect(() => { let alive = true; setLoading(true); api(`/eventos/${id}`).then(data => { if (alive) { setEvent(data); setForm(fieldsOf(data)); setChoices({}); } }).catch(err => alive && setError(err)).finally(() => alive && setLoading(false)); api('/importaciones').then(data => { if (alive) setActiveImport(data.items.find(row => row.eventId === id) || null); }).catch(() => {}); return () => { alive = false; }; }, [id]);
   useEffect(() => { if (activeImport?.status !== 'EN_PROCESO') return; let alive = true; const interval = setInterval(() => api(`/importaciones/${activeImport.id}`).then(data => alive && setActiveImport(data)).catch(err => { if (alive) { setError(err); clearInterval(interval); } }), 1400); return () => { alive = false; clearInterval(interval); }; }, [activeImport?.id, activeImport?.status]);
   useEffect(() => { function warn(e) { if (dirty) { e.preventDefault(); e.returnValue = ''; } } window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [dirty]);
-  function change(key, value) { setForm(current => ({ ...current, [key]: value })); setDirty(true); }
-  async function save(fromImport = false) { setBusy(true); setError(null); try { const data = await api(fromImport ? `/importaciones/${activeImport.id}/aplicar` : `/eventos/${id}`, { method: fromImport ? 'POST' : 'PATCH', body: { ...form, version: event.version } }); setEvent(data); setForm(fieldsOf(data)); setDirty(false); await refresh(); notify('Borrador guardado. Tus cambios están a salvo.'); return data; } catch (err) { setError(err); return null; } finally { setBusy(false); } }
+  function change(key, value) {
+    setForm(current => ({ ...current, [key]: value }));
+    setChoices(current => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+  async function save(fromImport = false) { setBusy(true); setError(null); try { const data = await api(fromImport ? `/importaciones/${activeImport.id}/aplicar` : `/eventos/${id}`, { method: fromImport ? 'POST' : 'PATCH', body: { ...form, version: event.version } }); setEvent(data); setForm(fieldsOf(data)); setChoices({}); await refresh(); notify('Borrador guardado. Tus cambios están a salvo.'); return data; } catch (err) { setError(err); return null; } finally { setBusy(false); } }
   async function publish() { setBusy(true); setError(null); try { const data = await api(`/eventos/${id}/publicar`, { method: 'POST', body: { version: event.version } }); setEvent(data); setConfirm(false); await refresh(); notify('Tu evento ya está publicado.'); } catch (err) { setError(err); setConfirm(false); } finally { setBusy(false); } }
-  function choose(field, candidate) { const value = normalizeCandidate(field, candidate); if (value === null) { notify('Revisa el formato y completa este campo manualmente.', 'error'); return; } change(field, value); notify(`${LABELS[field]} añadido al formulario. Guarda la revisión para confirmar.`); }
+  function choose(field, value, index) {
+    setChoices(current => ({
+      ...current,
+      [field]: { index, previous: current[field]?.previous ?? form[field] },
+    }));
+    setForm(current => ({ ...current, [field]: value }));
+  }
+  function removeChoice(field) {
+    if (choices[field]) change(field, choices[field].previous);
+  }
+  function onImport(record) {
+    setChoices({});
+    setActiveImport(record);
+  }
   function onLifecycleChanged(eventId, updated) {
     onEventChanged(eventId, updated);
-    setDirty(false);
+    setChoices({});
     if (!updated) {
       go(backTo);
       return;
@@ -164,13 +235,13 @@ function Editor({ id, refresh, notify, onEventChanged, backTo = '/events' }) {
     {published ? <><div className="notice green"><CheckCircle2 size={20} /><span>Tu evento ya es público. Esta versión queda protegida contra cambios.</span></div><div className="editor-layout assistant-workspace"><div className="editor-main"><EventChat event={event} dirty={false} /></div><EventPreview event={event} /></div></> : <>
       <div className="editor-tabs tabs"><button className={tab === 'assistant' ? 'active' : ''} onClick={() => setTab('assistant')}><span>01</span>Asistente</button><button className={tab === 'details' ? 'active' : ''} onClick={() => setTab('details')}><span>02</span>Información</button><button className={tab === 'tickets' ? 'active' : ''} onClick={() => setTab('tickets')}><span>03</span>Entradas</button><button className={tab === 'review' ? 'active' : ''} onClick={() => setTab('review')}><span>04</span>Publicar</button></div>
       <div className={`editor-layout ${tab === 'assistant' ? 'assistant-workspace' : ''}`}><div className="editor-main">
-      <div className="assistant-pane" hidden={tab !== 'assistant'}><EventChat event={event} dirty={dirty} onReview={() => setTab('details')} record={activeImport} onImport={setActiveImport} onInspect={() => setInspectImport(true)} /></div>
+      <div className="assistant-pane" hidden={tab !== 'assistant'}><EventChat event={event} dirty={dirty} onReview={() => setTab('details')} record={activeImport} onImport={onImport} onInspect={() => { setError(null); setInspectImport(true); }} /></div>
       {tab === 'details' && <><section className="form-panel"><div className="section-title"><div><h2>Los detalles que hacen la diferencia</h2><p>Completa o ajusta la información de tu evento.</p></div></div><Field label="Nombre del evento" required><input value={form.title} maxLength={140} onChange={e => change('title', e.target.value)} placeholder="Ej. Noche de Salsa" /></Field><div className="form-grid"><Field label="Categoría"><select value={form.category} onChange={e => change('category', e.target.value)}>{['Concierto', 'Festival', 'Teatro', 'Conferencia', 'Taller', 'Deporte', 'Otro'].map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Ciudad" required><input value={form.city} maxLength={80} onChange={e => change('city', e.target.value)} placeholder="Ej. Lima" /></Field><Field label="Fecha" required><input type="date" value={form.date} onChange={e => change('date', e.target.value)} /></Field><Field label="Hora de inicio" required><input type="time" value={form.time} onChange={e => change('time', e.target.value)} /></Field></div><Field label="Zona horaria"><select value={form.timezone} onChange={e => change('timezone', e.target.value)}>{['America/Lima', 'America/Bogota', 'America/Mexico_City', 'America/Santiago', 'America/Argentina/Buenos_Aires', 'Europe/Madrid'].map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Lugar" required><input value={form.venue} maxLength={150} onChange={e => change('venue', e.target.value)} placeholder="Nombre del local o recinto" /></Field><Field label="Cuéntale al público qué lo espera" required hint="Usa información confirmada. No incluyas datos privados del documento."><textarea rows={5} value={form.description} maxLength={5000} onChange={e => change('description', e.target.value)} placeholder="Música en vivo, una noche para compartir…" /></Field><div className="panel-actions"><button className="button secondary" onClick={() => save()} disabled={busy || !dirty}>Guardar cambios</button><button className="button primary" onClick={() => setTab('tickets')}>Continuar con entradas<ArrowRight size={16} /></button></div></section></>}
       {tab === 'tickets' && <section className="form-panel"><div className="section-title"><div><h2>Un lugar para cada experiencia</h2><p>Define las zonas y los precios que verá el público.</p></div></div><Field label="Aforo total del evento" required hint="La suma de cupos de las zonas no puede superar este número."><input type="number" min="0" max="1000000" value={form.capacity || ''} onChange={e => change('capacity', Number(e.target.value))} placeholder="Ej. 500" /></Field><div className="zones-label"><h3>Zonas de entrada</h3><span>{form.zones.length}/5 zonas</span></div>{form.zones.length === 0 && <div className="inline-empty"><Ticket size={24} /><p>Agrega tu primera zona, por ejemplo General o VIP.</p></div>}{form.zones.map((zone, i) => <div className="zone-row" key={i}><Field label="Nombre"><input value={zone.name} maxLength={60} placeholder="General" onChange={e => change('zones', form.zones.map((z, j) => i === j ? { ...z, name: e.target.value } : z))} /></Field><Field label="Cupos"><input type="number" min="1" value={zone.capacity || ''} onChange={e => change('zones', form.zones.map((z, j) => i === j ? { ...z, capacity: Number(e.target.value) } : z))} /></Field><Field label="Precio (S/) "><input type="number" min="0.01" step="0.01" value={zone.price || ''} onChange={e => change('zones', form.zones.map((z, j) => i === j ? { ...z, price: Number(e.target.value) } : z))} /></Field><button className="icon-button danger" aria-label={`Eliminar zona ${zone.name || i + 1}`} onClick={() => change('zones', form.zones.filter((_, j) => i !== j))}><Trash2 size={17} /></button></div>)}{form.zones.length < 5 && <button className="button secondary" onClick={() => change('zones', [...form.zones, { name: '', capacity: 1, price: 1 }])}><Plus size={16} />Agregar zona</button>}<div className={`capacity-summary ${form.zones.reduce((n, z) => n + z.capacity, 0) > form.capacity ? 'over' : ''}`}><Users size={18} />{form.zones.reduce((n, z) => n + z.capacity, 0)} cupos asignados de {form.capacity || 0}</div><p className="helper">Los precios los defines tú. Este MVP publica la oferta; todavía no procesa pagos ni vende entradas.</p><div className="panel-actions"><button className="button secondary" onClick={() => save()} disabled={busy || !dirty}>Guardar entradas</button><button className="button primary" onClick={() => setTab('review')}>Revisar publicación<ArrowRight size={16} /></button></div></section>}
       {tab === 'review' && <section className="form-panel"><div className="section-title"><div><h2>Un último vistazo antes de salir</h2><p>Comprueba tus datos y elige cómo se verá tu evento.</p></div></div><div className="review-checklist">{[['Nombre del evento', form.title], ['Fecha y hora', form.date && form.time], ['Lugar y ciudad', form.venue && form.city], ['Descripción', form.description], ['Entradas y aforo', form.zones.length && form.capacity && form.zones.every(z => z.name && z.capacity > 0 && z.price > 0) && form.zones.reduce((n, z) => n + z.capacity, 0) <= form.capacity]].map(([name, value]) => <div key={name}>{value ? <CheckCircle2 size={19} className="success-icon" /> : <AlertCircle size={19} className="warning-icon" />}<span>{name}</span><small>{value ? 'Completado' : 'Por completar'}</small></div>)}</div><h3>Una identidad para tu publicación</h3><div className="theme-picker">{['violet', 'peach', 'forest', 'midnight'].map(theme => <button className={`theme-swatch ${theme} ${form.theme === theme ? 'selected' : ''}`} aria-label={`Estilo ${theme}`} aria-pressed={form.theme === theme} key={theme} onClick={() => change('theme', theme)}>{form.theme === theme && <Check size={17} />}</button>)}</div><div className="notice"><LockKeyhole size={18} /><span>Solo se publican los datos del formulario. El PDF, las fuentes y las observaciones permanecen privados.</span></div><div className="panel-actions"><button className="button secondary" onClick={() => setPreview(true)}><Eye size={16} />Ver ficha completa</button><button className="button primary" disabled={busy || dirty} onClick={() => setConfirm(true)}>Publicar evento<ArrowUpRight size={16} /></button></div>{dirty && <p className="helper">Guarda los cambios antes de confirmar la publicación.</p>}</section>}
       </div><EventPreview event={form} /></div>
     </>}
-    {inspectImport && <Modal title="Revisión del documento" close={() => setInspectImport(false)}><ImportReview record={activeImport} event={event} onChoose={choose} onApply={async () => { const saved = await save(true); if (saved) setInspectImport(false); }} busy={busy} notify={notify} /></Modal>}
+    {inspectImport && <Modal title="Revisión del documento" close={() => setInspectImport(false)}><ImportReview record={activeImport} event={event} choices={choices} onChoose={choose} onRemove={removeChoice} onApply={async () => { const saved = await save(true); if (saved) setInspectImport(false); }} busy={busy} dirty={dirty} error={error} notify={notify} /></Modal>}
     {preview && <Modal title="Vista previa de tu publicación" close={() => setPreview(false)}><div className="modal-preview"><Poster event={form} /><h2>{form.title || 'Tu evento'}</h2><p>{dateLabel(form.date)} · {form.time || 'Hora por definir'} · {form.timezone}</p><p>{form.venue || 'Lugar por definir'}{form.city && `, ${form.city}`}</p><p className="description-text">{form.description || 'La descripción de tu evento aparecerá aquí.'}</p>{form.zones.map((z, i) => <div className="ticket-price" key={i}><span>{z.name || 'Zona'}</span><strong>{money(z.price)}</strong></div>)}<p className="helper">Las compras aún no están habilitadas en este MVP.</p></div></Modal>}
     {confirm && <Modal title="¿Listo para compartirlo?" close={() => setConfirm(false)}><p className="modal-copy">Publicaremos <strong>{event.title}</strong> en el catálogo. Comprueba la fecha, el lugar y los precios: para editar luego, retira primero el evento del catálogo.</p><div className="notice"><LockKeyhole size={18} />Tu documento y la revisión permanecen privados.</div><div className="panel-actions"><button className="button secondary" onClick={() => setConfirm(false)}>Seguir revisando</button><button className="button primary" onClick={publish} disabled={busy}>{busy ? 'Publicando…' : 'Sí, publicar evento'}<ArrowUpRight size={16} /></button></div></Modal>}
   </>;

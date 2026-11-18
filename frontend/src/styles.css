@@ -64,3 +64,32 @@
 .editor-manage-action { align-self: flex-start; margin: -7px 0 12px; }
 .button.danger { background: #ad2943; color: #fff; }
 .button.danger:hover:not(:disabled) { background: #8d1f35; }
+
+.source-candidate-selected {
+  border-inline-start: 3px solid #1d7963;
+  border-radius: 5px;
+  padding-inline-start: 12px;
+}
+.review-candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.review-selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  background: #e7f5ed;
+  color: #1b624c;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.review-time, .review-selection-count {
+  font-size: 12px;
+  color: var(--muted);
+}
+.review-time { margin: 8px 0; }
+.review-selection-count { margin-inline-end: auto; }

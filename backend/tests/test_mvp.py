@@ -199,6 +199,22 @@ def test_hallucinated_quote_and_value_are_rejected():
     assert result['fields']['title'] == [] and result['fields']['date'] == []
 
 
+def test_missing_zone_proposals_recover_complete_ticket_table_with_citation():
+    table = 'ZONA\nCUPOS\nPRECIO POR ENTRADA\nGeneral\n600\nS/ 65.00\nVIP\n200\nS/ 120.00'
+    raw = {'fields': {}, 'warnings': ['Las zonas requieren revisión manual de cupos y precios.']}
+    result = verified_result(raw, [{'page': 1, 'text': f'Entradas y distribución\n{table}\n'}])
+    [candidate] = result['fields']['zones']
+    assert candidate['page'] == 1
+    assert candidate['quote'] == table.split('PRECIO POR ENTRADA\n')[1]
+    assert candidate['parsed'] == [
+        {'name': 'General', 'capacity': 600, 'price': 65},
+        {'name': 'VIP', 'capacity': 200, 'price': 120},
+    ]
+    assert result['warnings'] == []
+    incomplete_table = table.replace('S/ 120.00', 'Por confirmar')
+    assert not verified_result(raw, [{'page': 1, 'text': incomplete_table}])['fields']['zones']
+
+
 def test_missing_groq_is_honest_failure_without_basic_mode(client, monkeypatch):
     monkeypatch.setenv('ALLOW_BASIC_EXTRACTION', 'false')
     monkeypatch.setattr(workflow.time, 'sleep', lambda _: None)
