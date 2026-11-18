@@ -119,8 +119,10 @@ def logout(user=Depends(current_user)):
 
 def owned(kind, key, user):
     row = storage.get(kind, key)
-    if not row or row.get('organizerId') != user['id']:
+    if not row or row.get('organizerId') != user['id'] or row.get('status') == 'ELIMINADO':
         raise HTTPException(404, 'No encontramos ese registro en tu cuenta.')
+    if kind in ('files', 'imports'):
+        owned('events', row['eventId'], user)
     return row
 
 
@@ -171,7 +173,7 @@ def publication_issues(event):
 
 @app.get('/eventos')
 def events(user=Depends(current_user)):
-    return {'items': storage.list_records('events', user['id'])}
+    return {'items': [row for row in storage.list_records('events', user['id']) if row['status'] != 'ELIMINADO']}
 
 
 @app.post('/eventos', status_code=201)
@@ -212,6 +214,30 @@ def publish(event_id: str, payload: VersionRequest, user=Depends(current_user)):
     event.update(status='PUBLICADO', version=event['version'] + 1, publishedAt=utcnow(), updatedAt=utcnow())
     storage.put('events', event_id, event, expected_version=payload.version)
     return event
+
+
+@app.post('/eventos/{event_id}/retirar')
+def withdraw_event(event_id: str, payload: VersionRequest, user=Depends(current_user)):
+    event = owned('events', event_id, user)
+    if event['status'] != 'PUBLICADO':
+        raise HTTPException(409, 'Solo puedes retirar un evento publicado.')
+    if event['version'] != payload.version:
+        raise HTTPException(409, 'El evento cambió. Recarga antes de retirarlo.')
+    event.pop('publishedAt', None)
+    event.update(status='BORRADOR', version=event['version'] + 1, updatedAt=utcnow())
+    storage.put('events', event_id, event, expected_version=payload.version)
+    return event
+
+
+@app.post('/eventos/{event_id}/eliminar', status_code=204)
+def delete_draft(event_id: str, payload: VersionRequest, user=Depends(current_user)):
+    event = owned('events', event_id, user)
+    if event['status'] == 'PUBLICADO':
+        raise HTTPException(409, 'Retira el evento del catálogo antes de eliminarlo.')
+    editable(event, payload.version)
+    event.update(status='ELIMINADO', version=event['version'] + 1, updatedAt=utcnow())
+    storage.put('events', event_id, event, expected_version=payload.version)
+    return Response(status_code=204)
 
 
 PUBLIC_FIELDS = ['id', 'title', 'category', 'date', 'time', 'timezone', 'venue', 'city', 'description', 'zones', 'theme', 'organizerName', 'publishedAt']
@@ -300,7 +326,8 @@ def start_import(payload: ImportRequest, background: BackgroundTasks, user=Depen
 
 @app.get('/importaciones')
 def imports(user=Depends(current_user)):
-    return {'items': [import_view(row) for row in storage.list_records('imports', user['id'])]}
+    active = {row['id'] for row in events(user)['items']}
+    return {'items': [import_view(row) for row in storage.list_records('imports', user['id']) if row['eventId'] in active]}
 
 
 @app.get('/importaciones/{import_id}')

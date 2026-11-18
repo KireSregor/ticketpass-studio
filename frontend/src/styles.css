@@ -48,3 +48,19 @@
 @media(max-width:950px){.editor-layout.assistant-workspace{grid-template-columns:1fr}.assistant-workspace .editor-preview{display:none}}
 
 .assistant-hub{max-width:960px;background:white;border:1px solid var(--line);border-radius:16px;padding:28px}.assistant-hub-intro{display:flex;gap:15px;align-items:flex-start;margin-bottom:26px}.assistant-hub-intro h2{font-size:21px;line-height:1.45}.assistant-hub-intro p{font-size:13px;color:var(--muted);line-height:1.8;margin-top:9px;max-width:560px}.assistant-hub>.search{max-width:100%;margin-bottom:18px}.assistant-event-list{display:flex;flex-direction:column}.assistant-event-row{display:flex;align-items:center;gap:15px;padding:20px 8px;border-bottom:1px solid var(--line);transition:background .15s}.assistant-event-row:last-child{border-bottom:0}.assistant-event-row:hover{background:#faf9fe}.assistant-event-icon{width:48px;height:52px;flex-shrink:0;display:grid;place-items:center;background:#eee9fc;color:#6b58b5;border-radius:11px}.assistant-event-icon.forest{background:#e7f1eb;color:#48775d}.assistant-event-icon.peach{background:#fbede5;color:#b77b5b}.assistant-event-icon.midnight{background:#e9edf5;color:#52688b}.assistant-event-row>div{min-width:0;flex:1}.assistant-event-row strong{font-size:14px;overflow-wrap:anywhere}.assistant-event-row p{font-size:12px;color:var(--muted);margin-top:7px}.assistant-event-row>svg{color:#786c94;flex-shrink:0}.assistant-hub-empty{padding:24px 0;font-size:13px;color:var(--muted);line-height:1.8}.assistant-hub-empty .text-button{margin-top:12px}@media(max-width:740px){.assistant-hub{padding:20px 16px}.assistant-hub-intro h2{font-size:18px}.assistant-hub-intro p{font-size:12px}.assistant-event-row{gap:10px;padding:17px 0;flex-wrap:wrap}.assistant-event-row strong{font-size:13px}.assistant-event-row p{font-size:11px}.assistant-event-icon{width:38px;height:43px}.assistant-event-row>.badge{font-size:9px}.assistant-event-row>svg{display:none}}
+
+.event-manage-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 3px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.event-manage-action:hover:not(:disabled) { color: var(--primary-dark); text-decoration: underline; }
+.event-card-body > .event-manage-action { margin-top: 7px; }
+.editor-manage-action { align-self: flex-start; margin: -7px 0 12px; }
+.button.danger { background: #ad2943; color: #fff; }
+.button.danger:hover:not(:disabled) { background: #8d1f35; }

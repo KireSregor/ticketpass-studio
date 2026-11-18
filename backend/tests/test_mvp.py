@@ -140,6 +140,45 @@ def test_invalid_zones_and_capacity_are_not_published(client):
     assert client.patch(f"/eventos/{ev['id']}", headers=headers, json={**fields, 'version': 2, 'zones': [{'name': 'General', 'capacity': 10, 'price': -1}]}).status_code == 422
 
 
+def test_deleted_draft_disappears_from_private_event_and_import_routes(client):
+    owner, other = account(client), account(client, 'otro@example.com')
+    draft = event(client, owner)
+    imp, body = upload_and_import(client, owner, draft)
+    path = f"/eventos/{draft['id']}"
+    delete = path + '/eliminar'
+    assert client.post(delete, headers=other, json={'version': 1}).status_code == 404
+    assert client.post(delete, headers=owner, json={'version': 2}).status_code == 409
+    assert client.post(delete, headers=owner, json={'version': 1}).status_code == 204
+    assert client.get('/eventos', headers=owner).json()['items'] == []
+    assert client.get('/importaciones', headers=owner).json()['items'] == []
+    for url in [path, f"/importaciones/{imp['id']}", f"/importaciones/{imp['id']}/reporte"]:
+        assert client.get(url, headers=owner).status_code == 404
+    assert client.post('/importaciones', headers={**owner, 'Idempotency-Key': 'request-001'}, json=body).status_code == 404
+
+
+def test_withdrawal_returns_published_event_to_draft_and_keeps_its_imports(client):
+    owner, other = account(client), account(client, 'otro@example.com')
+    draft = event(client, owner)
+    path = f"/eventos/{draft['id']}"
+    public = f"/catalogo/{draft['id']}"
+    fields = {**editable_fields(draft), 'date': '2030-12-12', 'time': '20:00', 'city': 'Lima', 'venue': 'Sala', 'description': 'Concierto confirmado.', 'capacity': 100, 'zones': [{'name': 'General', 'capacity': 100, 'price': 50}]}
+    saved = client.patch(path, headers=owner, json=fields).json()
+    imp, _ = upload_and_import(client, owner, saved)
+    published = client.post(path + '/publicar', headers=owner, json={'version': saved['version']}).json()
+    version = published['version']
+    assert client.get(public).status_code == 200
+    assert client.post(path + '/eliminar', headers=owner, json={'version': version}).status_code == 409
+    assert client.post(path + '/retirar', headers=other, json={'version': version}).status_code == 404
+    assert client.post(path + '/retirar', headers=owner, json={'version': version - 1}).status_code == 409
+    withdrawn = client.post(path + '/retirar', headers=owner, json={'version': version})
+    assert withdrawn.status_code == 200 and withdrawn.json()['status'] == 'BORRADOR'
+    assert withdrawn.json()['zones'] == fields['zones']
+    assert client.get(public).status_code == 404
+    assert client.get('/catalogo').json()['items'] == []
+    assert client.get(f"/importaciones/{imp['id']}/reporte", headers=owner).status_code == 200
+    assert client.post(path + '/publicar', headers=owner, json={'version': withdrawn.json()['version']}).status_code == 200
+
+
 def test_malformed_encrypted_scanned_and_long_pdfs_rejected():
     with pytest.raises(InputError): extract_pages(b'not a pdf')
     with pytest.raises(InputError): extract_pages(pdf_bytes(pages=6))

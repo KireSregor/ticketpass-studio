@@ -13,6 +13,8 @@ TicketPass Studio ayuda a organizadores a convertir la ficha o el contrato de un
 3. **Revisar.** Consulta los datos en el chat, elige las propuestas correctas y completa los campos que falten.
 4. **Publicar.** Confirma la ficha para que aparezca en el catálogo. Desde **Importaciones** puedes consultar el análisis y descargar su CSV.
 
+En **Mis eventos** puedes eliminar los borradores de prueba o retirar un evento del catálogo para editarlo y volver a publicarlo. Al retirarlo, su ficha y sus importaciones se conservan. Al eliminar un borrador, el evento y sus importaciones dejan de estar disponibles en Backstage.
+
 Para probar la revisión, usa **Probar un PDF de ejemplo** en el asistente: el [documento de muestra](backend/assets/evento-ejemplo.pdf) contiene dos fechas. El [contrato ficticio](backend/assets/contrato-ejemplo.pdf) sirve para consultar condiciones y distinguir honorarios de precios de entrada.
 
 El MVP procesa un PDF por carga, de hasta **5 MB, 5 páginas y 18.000 caracteres**. El asistente consulta la ficha guardada y hasta tres importaciones recientes del evento. Groq procesa cada consulta sin recibir el historial de mensajes. La extracción requiere texto seleccionable. OCR, pagos y predicción de demanda quedan fuera del alcance.
