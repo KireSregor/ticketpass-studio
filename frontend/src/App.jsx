@@ -123,6 +123,15 @@ function normalizeCandidate(field, candidate) {
   return value;
 }
 
+function SourceQuote({ quote, highlight, page }) {
+  const start = highlight ? quote.toLowerCase().indexOf(highlight.toLowerCase()) : -1;
+  const end = start + (highlight?.length ?? 0);
+  return <blockquote>
+    “{start === -1 ? quote : <>{quote.slice(0, start)}<mark>{quote.slice(start, end)}</mark>{quote.slice(end)}</>}”
+    <cite>Página {page}</cite>
+  </blockquote>;
+}
+
 function ImportReview({ record, event, choices, onChoose, onRemove, onApply, busy, dirty, error, notify }) {
   if (!record) return null;
   const running = record.status === 'EN_PROCESO'; const stale = record.inputVersion !== event.version;
@@ -152,10 +161,13 @@ function ImportReview({ record, event, choices, onChoose, onRemove, onApply, bus
             const value = normalizeCandidate(field, candidate);
             const selected = choices[field]?.index === i;
             const saved = sameReviewValue(field, value, event[field]);
+            const displayed = field === 'time' && value ? value : candidate.value;
+            const highlight = ['zones', 'description'].includes(field) ? '' : displayed;
             return <div className={`source-candidate${selected ? ' source-candidate-selected' : ''}`} key={i}>
-              <span className="source-value">{field === 'zones' && value ? value.map(z => `${z.name}: ${z.capacity} cupos · ${money(z.price)}`).join(' / ') : candidate.value}</span>
-              <blockquote>“{candidate.quote}”<cite>Página {candidate.page}</cite></blockquote>
-              {field === 'time' && value && value !== candidate.value && <p className="review-time">Hora de inicio que se aplicará: <strong>{value}</strong></p>}
+              <div className="source-value">{field === 'zones' && value ? value.map(z =>
+                <div className="source-zone" key={z.name}>{z.name}: {z.capacity} cupos · {money(z.price)}</div>
+              ) : displayed}</div>
+              <SourceQuote quote={candidate.quote} highlight={highlight} page={candidate.page} />
               <div className="review-candidate-actions">
                 {selected ? <>
                   <span className="review-selected"><Check size={15} />Seleccionado</span>

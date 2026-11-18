@@ -93,3 +93,35 @@
 }
 .review-time { margin: 8px 0; }
 .review-selection-count { margin-inline-end: auto; }
+
+.review-panel .source-field-title strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: #44446b;
+}
+.review-panel .source-value {
+  font-size: 17px;
+  line-height: 1.45;
+  font-weight: 700;
+  color: #252443;
+}
+.review-panel .source-zone + .source-zone { margin-top: 4px; }
+.review-panel .source-candidate blockquote {
+  color: #57536e;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.review-panel .source-candidate cite {
+  font-size: 11px;
+  color: #625a78;
+}
+.review-panel .source-candidate mark {
+  color: #37268f;
+  background: #e6defe;
+  font-weight: 700;
+  border-radius: 3px;
+  padding-inline: 2px;
+}
+.review-panel .source-found { color: #35624b; }
+.review-panel .source-conflict { color: #79601f; }
+.review-panel .source-found, .review-panel .source-conflict { font-size: 10px; }
