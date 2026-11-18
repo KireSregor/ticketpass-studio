@@ -21,7 +21,7 @@ export async function uploadPdf(event, file) {
   const local = signed.uploadUrl.startsWith('/');
   const response = await fetch(local ? apiUrl(signed.uploadUrl) : signed.uploadUrl, { method: 'PUT', headers: { ...signed.headers, ...(local ? { Authorization: `Bearer ${token()}` } : {}) }, body: file });
   if (!response.ok) throw new Error('No pudimos subir el archivo. Revisa que sea un PDF válido y vuelve a intentarlo.');
-  return api('/importaciones', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: { eventId: event.id, version: event.version, fileId: signed.fileId } });
+  return api('/importaciones', { method: 'POST', headers: { 'Idempotency-Key': signed.fileId }, body: { eventId: event.id, version: event.version, fileId: signed.fileId } });
 }
 export async function downloadReport(id) {
   const response = await fetch(apiUrl(`/importaciones/${id}/reporte`), { headers: { Authorization: `Bearer ${token()}` } });
