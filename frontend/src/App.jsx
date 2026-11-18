@@ -181,6 +181,7 @@ function ImportReview({ record, event, choices, onChoose, onRemove, onApply, bus
 
 function Editor({ id, refresh, notify, onEventChanged, backTo = '/events' }) {
   const [manageEvent, setManageEvent] = useState(false);
+  const publishInFlight = useRef(false);
   const [event, setEvent] = useState(null), [form, setForm] = useState(INITIAL), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState(null), [activeImport, setActiveImport] = useState(null), [tab, setTab] = useState('assistant'), [preview, setPreview] = useState(false), [confirm, setConfirm] = useState(false), [inspectImport, setInspectImport] = useState(false);
   const [choices, setChoices] = useState({});
   const dirty = Boolean(event && Object.keys(INITIAL).some(key => !sameReviewValue(key, form[key], event[key] ?? INITIAL[key])));
@@ -196,8 +197,61 @@ function Editor({ id, refresh, notify, onEventChanged, backTo = '/events' }) {
       return next;
     });
   }
-  async function save(fromImport = false) { setBusy(true); setError(null); try { const data = await api(fromImport ? `/importaciones/${activeImport.id}/aplicar` : `/eventos/${id}`, { method: fromImport ? 'POST' : 'PATCH', body: { ...form, version: event.version } }); setEvent(data); setForm(fieldsOf(data)); setChoices({}); await refresh(); notify('Borrador guardado. Tus cambios están a salvo.'); return data; } catch (err) { setError(err); return null; } finally { setBusy(false); } }
-  async function publish() { setBusy(true); setError(null); try { const data = await api(`/eventos/${id}/publicar`, { method: 'POST', body: { version: event.version } }); setEvent(data); setConfirm(false); await refresh(); notify('Tu evento ya está publicado.'); } catch (err) { setError(err); setConfirm(false); } finally { setBusy(false); } }
+  async function persistDraft(fromImport) {
+    const saved = await api(fromImport ? `/importaciones/${activeImport.id}/aplicar` : `/eventos/${id}`, {
+      method: fromImport ? 'POST' : 'PATCH',
+      body: { ...form, version: event.version },
+    });
+    setEvent(saved);
+    setForm(fieldsOf(saved));
+    setChoices({});
+    return saved;
+  }
+
+  async function save(fromImport = false) {
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await persistDraft(fromImport);
+      refresh().catch(() => {});
+      notify('Borrador guardado. Tus cambios están a salvo.');
+      return saved;
+    } catch (err) {
+      setError(err);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function closePublish() {
+    if (publishInFlight.current) return;
+    setConfirm(false);
+    setError(null);
+  }
+
+  async function publish() {
+    if (publishInFlight.current) return;
+    publishInFlight.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      const draft = dirty ? await persistDraft(false) : event;
+      const published = await api(`/eventos/${id}/publicar`, {
+        method: 'POST',
+        body: { version: draft.version },
+      });
+      setEvent(published);
+      setConfirm(false);
+      notify('Tu evento ya está publicado.');
+    } catch (err) {
+      setError(err);
+    } finally {
+      refresh().catch(() => {});
+      publishInFlight.current = false;
+      setBusy(false);
+    }
+  }
   function choose(field, value, index) {
     setChoices(current => ({
       ...current,
@@ -238,12 +292,27 @@ function Editor({ id, refresh, notify, onEventChanged, backTo = '/events' }) {
       <div className="assistant-pane" hidden={tab !== 'assistant'}><EventChat event={event} dirty={dirty} onReview={() => setTab('details')} record={activeImport} onImport={onImport} onInspect={() => { setError(null); setInspectImport(true); }} /></div>
       {tab === 'details' && <><section className="form-panel"><div className="section-title"><div><h2>Los detalles que hacen la diferencia</h2><p>Completa o ajusta la información de tu evento.</p></div></div><Field label="Nombre del evento" required><input value={form.title} maxLength={140} onChange={e => change('title', e.target.value)} placeholder="Ej. Noche de Salsa" /></Field><div className="form-grid"><Field label="Categoría"><select value={form.category} onChange={e => change('category', e.target.value)}>{['Concierto', 'Festival', 'Teatro', 'Conferencia', 'Taller', 'Deporte', 'Otro'].map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Ciudad" required><input value={form.city} maxLength={80} onChange={e => change('city', e.target.value)} placeholder="Ej. Lima" /></Field><Field label="Fecha" required><input type="date" value={form.date} onChange={e => change('date', e.target.value)} /></Field><Field label="Hora de inicio" required><input type="time" value={form.time} onChange={e => change('time', e.target.value)} /></Field></div><Field label="Zona horaria"><select value={form.timezone} onChange={e => change('timezone', e.target.value)}>{['America/Lima', 'America/Bogota', 'America/Mexico_City', 'America/Santiago', 'America/Argentina/Buenos_Aires', 'Europe/Madrid'].map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Lugar" required><input value={form.venue} maxLength={150} onChange={e => change('venue', e.target.value)} placeholder="Nombre del local o recinto" /></Field><Field label="Cuéntale al público qué lo espera" required hint="Usa información confirmada. No incluyas datos privados del documento."><textarea rows={5} value={form.description} maxLength={5000} onChange={e => change('description', e.target.value)} placeholder="Música en vivo, una noche para compartir…" /></Field><div className="panel-actions"><button className="button secondary" onClick={() => save()} disabled={busy || !dirty}>Guardar cambios</button><button className="button primary" onClick={() => setTab('tickets')}>Continuar con entradas<ArrowRight size={16} /></button></div></section></>}
       {tab === 'tickets' && <section className="form-panel"><div className="section-title"><div><h2>Un lugar para cada experiencia</h2><p>Define las zonas y los precios que verá el público.</p></div></div><Field label="Aforo total del evento" required hint="La suma de cupos de las zonas no puede superar este número."><input type="number" min="0" max="1000000" value={form.capacity || ''} onChange={e => change('capacity', Number(e.target.value))} placeholder="Ej. 500" /></Field><div className="zones-label"><h3>Zonas de entrada</h3><span>{form.zones.length}/5 zonas</span></div>{form.zones.length === 0 && <div className="inline-empty"><Ticket size={24} /><p>Agrega tu primera zona, por ejemplo General o VIP.</p></div>}{form.zones.map((zone, i) => <div className="zone-row" key={i}><Field label="Nombre"><input value={zone.name} maxLength={60} placeholder="General" onChange={e => change('zones', form.zones.map((z, j) => i === j ? { ...z, name: e.target.value } : z))} /></Field><Field label="Cupos"><input type="number" min="1" value={zone.capacity || ''} onChange={e => change('zones', form.zones.map((z, j) => i === j ? { ...z, capacity: Number(e.target.value) } : z))} /></Field><Field label="Precio (S/) "><input type="number" min="0.01" step="0.01" value={zone.price || ''} onChange={e => change('zones', form.zones.map((z, j) => i === j ? { ...z, price: Number(e.target.value) } : z))} /></Field><button className="icon-button danger" aria-label={`Eliminar zona ${zone.name || i + 1}`} onClick={() => change('zones', form.zones.filter((_, j) => i !== j))}><Trash2 size={17} /></button></div>)}{form.zones.length < 5 && <button className="button secondary" onClick={() => change('zones', [...form.zones, { name: '', capacity: 1, price: 1 }])}><Plus size={16} />Agregar zona</button>}<div className={`capacity-summary ${form.zones.reduce((n, z) => n + z.capacity, 0) > form.capacity ? 'over' : ''}`}><Users size={18} />{form.zones.reduce((n, z) => n + z.capacity, 0)} cupos asignados de {form.capacity || 0}</div><p className="helper">Los precios los defines tú. Este MVP publica la oferta; todavía no procesa pagos ni vende entradas.</p><div className="panel-actions"><button className="button secondary" onClick={() => save()} disabled={busy || !dirty}>Guardar entradas</button><button className="button primary" onClick={() => setTab('review')}>Revisar publicación<ArrowRight size={16} /></button></div></section>}
-      {tab === 'review' && <section className="form-panel"><div className="section-title"><div><h2>Un último vistazo antes de salir</h2><p>Comprueba tus datos y elige cómo se verá tu evento.</p></div></div><div className="review-checklist">{[['Nombre del evento', form.title], ['Fecha y hora', form.date && form.time], ['Lugar y ciudad', form.venue && form.city], ['Descripción', form.description], ['Entradas y aforo', form.zones.length && form.capacity && form.zones.every(z => z.name && z.capacity > 0 && z.price > 0) && form.zones.reduce((n, z) => n + z.capacity, 0) <= form.capacity]].map(([name, value]) => <div key={name}>{value ? <CheckCircle2 size={19} className="success-icon" /> : <AlertCircle size={19} className="warning-icon" />}<span>{name}</span><small>{value ? 'Completado' : 'Por completar'}</small></div>)}</div><h3>Una identidad para tu publicación</h3><div className="theme-picker">{['violet', 'peach', 'forest', 'midnight'].map(theme => <button className={`theme-swatch ${theme} ${form.theme === theme ? 'selected' : ''}`} aria-label={`Estilo ${theme}`} aria-pressed={form.theme === theme} key={theme} onClick={() => change('theme', theme)}>{form.theme === theme && <Check size={17} />}</button>)}</div><div className="notice"><LockKeyhole size={18} /><span>Solo se publican los datos del formulario. El PDF, las fuentes y las observaciones permanecen privados.</span></div><div className="panel-actions"><button className="button secondary" onClick={() => setPreview(true)}><Eye size={16} />Ver ficha completa</button><button className="button primary" disabled={busy || dirty} onClick={() => setConfirm(true)}>Publicar evento<ArrowUpRight size={16} /></button></div>{dirty && <p className="helper">Guarda los cambios antes de confirmar la publicación.</p>}</section>}
+      {tab === 'review' && <section className="form-panel"><div className="section-title"><div><h2>Un último vistazo antes de salir</h2><p>Comprueba tus datos y elige cómo se verá tu evento.</p></div></div><div className="review-checklist">{[['Nombre del evento', form.title], ['Fecha y hora', form.date && form.time], ['Lugar y ciudad', form.venue && form.city], ['Descripción', form.description], ['Entradas y aforo', form.zones.length && form.capacity && form.zones.every(z => z.name && z.capacity > 0 && z.price > 0) && form.zones.reduce((n, z) => n + z.capacity, 0) <= form.capacity]].map(([name, value]) => <div key={name}>{value ? <CheckCircle2 size={19} className="success-icon" /> : <AlertCircle size={19} className="warning-icon" />}<span>{name}</span><small>{value ? 'Completado' : 'Por completar'}</small></div>)}</div><h3>Una identidad para tu publicación</h3><div className="theme-picker">{['violet', 'peach', 'forest', 'midnight'].map(theme => <button className={`theme-swatch ${theme} ${form.theme === theme ? 'selected' : ''}`} aria-label={`Estilo ${theme}`} aria-pressed={form.theme === theme} key={theme} onClick={() => change('theme', theme)}>{form.theme === theme && <Check size={17} />}</button>)}</div><div className="notice"><LockKeyhole size={18} /><span>Solo se publican los datos del formulario. El PDF, las fuentes y las observaciones permanecen privados.</span></div><div className="panel-actions"><button className="button secondary" onClick={() => setPreview(true)}><Eye size={16} />Ver ficha completa</button><button className="button primary" disabled={busy} onClick={() => { setError(null); setConfirm(true); }}>
+        {dirty ? 'Guardar y publicar' : 'Publicar evento'}<ArrowUpRight size={16} />
+      </button></div></section>}
       </div><EventPreview event={form} /></div>
     </>}
     {inspectImport && <Modal title="Revisión del documento" close={() => setInspectImport(false)}><ImportReview record={activeImport} event={event} choices={choices} onChoose={choose} onRemove={removeChoice} onApply={async () => { const saved = await save(true); if (saved) setInspectImport(false); }} busy={busy} dirty={dirty} error={error} notify={notify} /></Modal>}
     {preview && <Modal title="Vista previa de tu publicación" close={() => setPreview(false)}><div className="modal-preview"><Poster event={form} /><h2>{form.title || 'Tu evento'}</h2><p>{dateLabel(form.date)} · {form.time || 'Hora por definir'} · {form.timezone}</p><p>{form.venue || 'Lugar por definir'}{form.city && `, ${form.city}`}</p><p className="description-text">{form.description || 'La descripción de tu evento aparecerá aquí.'}</p>{form.zones.map((z, i) => <div className="ticket-price" key={i}><span>{z.name || 'Zona'}</span><strong>{money(z.price)}</strong></div>)}<p className="helper">Las compras aún no están habilitadas en este MVP.</p></div></Modal>}
-    {confirm && <Modal title="¿Listo para compartirlo?" close={() => setConfirm(false)}><p className="modal-copy">Publicaremos <strong>{event.title}</strong> en el catálogo. Comprueba la fecha, el lugar y los precios: para editar luego, retira primero el evento del catálogo.</p><div className="notice"><LockKeyhole size={18} />Tu documento y la revisión permanecen privados.</div><div className="panel-actions"><button className="button secondary" onClick={() => setConfirm(false)}>Seguir revisando</button><button className="button primary" onClick={publish} disabled={busy}>{busy ? 'Publicando…' : 'Sí, publicar evento'}<ArrowUpRight size={16} /></button></div></Modal>}
+    {confirm && <Modal title={dirty ? '¿Guardar y publicar?' : '¿Publicar evento?'} close={closePublish}>
+      <p className="modal-copy">
+        {dirty ? 'Guardaremos tus cambios y publicaremos ' : 'Publicaremos '}
+        <strong>{form.title || 'tu evento'}</strong> en el catálogo.
+      </p>
+      <div className="notice"><LockKeyhole size={18} />Tu documento y la revisión permanecen privados.</div>
+      <ErrorBox error={error} />
+      <div className="panel-actions">
+        <button className="button secondary" onClick={closePublish} disabled={busy}>Seguir revisando</button>
+        <button className="button primary" onClick={publish} disabled={busy}>
+          {busy ? 'Publicando…' : dirty ? 'Sí, guardar y publicar' : 'Sí, publicar evento'}<ArrowUpRight size={16} />
+        </button>
+      </div>
+    </Modal>}
   </>;
 }
 
