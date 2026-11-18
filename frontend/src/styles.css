@@ -95,20 +95,33 @@
 .review-selection-count { margin-inline-end: auto; }
 
 .review-panel .source-field-title strong {
-  font-size: 13px;
-  font-weight: 700;
-  color: #44446b;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5a5270;
 }
 .review-panel .source-value {
-  font-size: 17px;
-  line-height: 1.45;
-  font-weight: 700;
-  color: #252443;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: #38324e;
 }
-.review-panel .source-zone + .source-zone { margin-top: 4px; }
+.review-panel .source-value-prose { font-weight: 400; }
+.review-panel .source-zone {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+}
+.review-panel .source-zone + .source-zone { margin-top: 3px; }
+.review-panel .source-zone-details {
+  font-size: 12px;
+  font-weight: 400;
+  color: #625a78;
+  font-variant-numeric: tabular-nums;
+}
 .review-panel .source-candidate blockquote {
   color: #57536e;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.6;
 }
 .review-panel .source-candidate cite {
@@ -116,9 +129,9 @@
   color: #625a78;
 }
 .review-panel .source-candidate mark {
-  color: #37268f;
-  background: #e6defe;
-  font-weight: 700;
+  color: #4d3d86;
+  background: #eee9f8;
+  font-weight: 600;
   border-radius: 3px;
   padding-inline: 2px;
 }

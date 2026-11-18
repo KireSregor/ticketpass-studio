@@ -164,8 +164,10 @@ function ImportReview({ record, event, choices, onChoose, onRemove, onApply, bus
             const displayed = field === 'time' && value ? value : candidate.value;
             const highlight = ['zones', 'description'].includes(field) ? '' : displayed;
             return <div className={`source-candidate${selected ? ' source-candidate-selected' : ''}`} key={i}>
-              <div className="source-value">{field === 'zones' && value ? value.map(z =>
-                <div className="source-zone" key={z.name}>{z.name}: {z.capacity} cupos · {money(z.price)}</div>
+              <div className={`source-value${field === 'description' ? ' source-value-prose' : ''}`}>{field === 'zones' && value ? value.map(z =>
+                <div className="source-zone" key={z.name}>
+                  <span>{z.name}</span><span className="source-zone-details">{z.capacity} cupos · {money(z.price)}</span>
+                </div>
               ) : displayed}</div>
               <SourceQuote quote={candidate.quote} highlight={highlight} page={candidate.page} />
               <div className="review-candidate-actions">
